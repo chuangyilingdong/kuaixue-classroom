@@ -6,6 +6,18 @@ const {localProjectStatus,projectPaths,writeSnapshotMetadata}=require('./local-p
 const classroomWindows = new Set();
 const dist = path.resolve(__dirname, '../dist');
 const {readFileSync} = require('node:fs');
+const singleInstance = app.requestSingleInstanceLock();
+if (!singleInstance) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    const [window] = BrowserWindow.getAllWindows();
+    if (!window) return;
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
+  });
+}
 const configFile = path.join(dist,'desktop-service.json');
 const config = require('node:fs').existsSync(configFile) ? JSON.parse(readFileSync(configFile,'utf8')) : {};
 const classroomEntry = config.integrated ? 'kuaixue://classroom/index.html' : pathToFileURL(path.join(dist,'index.html')).href;
@@ -255,7 +267,7 @@ function createWindow() {
       .catch(error => console.error("Unable to open classroom window:", error.message));
   }
 }
-app.whenReady().then(() => {
+if (singleInstance) app.whenReady().then(() => {
   if (config.integrated) protocol.handle('kuaixue', request => {
     const url = new URL(request.url);
     if (url.host !== 'classroom' || request.method !== 'GET') return new Response(null,{status:404});
