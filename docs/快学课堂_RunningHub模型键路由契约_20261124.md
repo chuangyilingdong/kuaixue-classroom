@@ -228,17 +228,44 @@ Authorization: Bearer <RUNNINGHUB_API_KEY>
 Content-Type: application/json
 ```
 
-请求体至少包含业务参数和幂等客户端 ID：
+执行请求体必须按主站生产预览中的 H3 schema 构造。课程内部参数
+`aspectRatio / durationSeconds / audio` 不能原样发送给 RunningHub：
+
+| 课程内部字段 | H3 执行字段 |
+| --- | --- |
+| `aspectRatio` | `ratio` |
+| `durationSeconds` | `duration`，字符串 |
+| `audio` | `generateAudio`，布尔值 |
+
+以下字段不得发送给 H3：
+
+```text
+aspectRatio
+durationSeconds
+audio
+audioRole
+inputMode
+title
+```
+
+正确请求体：
 
 ```json
 {
   "prompt": "猴子跳起来",
-  "aspectRatio": "adaptive",
+  "ratio": "adaptive",
   "resolution": "768P",
-  "durationSeconds": 5,
+  "duration": "5",
+  "generateAudio": false,
+  "imageUrls": [
+    "https://aicyld.com.cn/api/v1/course-assets/<asset-id>?expires=<unix>&signature=<sig>"
+  ],
   "clientId": "<jobId>"
 }
 ```
+
+`imageUrls`、`videoUrls`、`audioUrls` 按参考素材类型分组。
+课程私有素材必须先转换为短期公网签名 URL。
 
 期望响应：
 
@@ -252,7 +279,7 @@ Content-Type: application/json
 }
 ```
 
-报价与预扣：
+报价与预扣仍使用课程内部参数，不跟随执行字段改名：
 
 ```json
 {
@@ -264,6 +291,7 @@ Content-Type: application/json
     "aspectRatio": "adaptive",
     "resolution": "768P",
     "durationSeconds": 5,
+    "generateAudio": false,
     "outputCount": 1,
     "batchCount": 1
   }

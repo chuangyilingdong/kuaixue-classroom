@@ -129,22 +129,45 @@ function generationBody(job,assetOptions={}){
   }:null;
   if(typeof input.prompt==='string'&&input.prompt.trim())body.prompt=input.prompt.trim();
   if(typeof input.title==='string'&&input.title.trim())body.title=input.title.trim();
-  const referenceUrl=item=>typeof item==='string'?item:item&&typeof item==='object'?String(item.url||item.assetUrl||item.previewUrl||''):'';
-  const references=Array.isArray(input.referenceAssets)?input.referenceAssets.map(referenceUrl)
-    .filter(item=>/^https:\/\//.test(item))
-    .map(item=>signingOptions?signedCourseAssetUrl(item,signingOptions):item):[];
-  if(references.length)body.imageUrls=references;
+  const reference=item=>{
+    if(typeof item==='string')return /^https:\/\//.test(item)?{type:'IMAGE',url:item}:null;
+    if(!item||typeof item!=='object')return null;
+    const url=String(item.url||item.assetUrl||item.previewUrl||'');
+    if(!/^https:\/\//.test(url))return null;
+    return {type:String(item.type||'IMAGE').toUpperCase(),url};
+  };
+  const references=Array.isArray(input.referenceAssets)?input.referenceAssets.map(reference).filter(Boolean):[];
+  const signedReference=item=>signingOptions?signedCourseAssetUrl(item.url,signingOptions):item.url;
+  const imageUrls=references.filter(item=>item.type==='IMAGE').map(signedReference);
+  const videoUrls=references.filter(item=>item.type==='VIDEO').map(signedReference);
+  const audioUrls=references.filter(item=>item.type==='AUDIO').map(signedReference);
+  if(imageUrls.length)body.imageUrls=imageUrls;
+  if(videoUrls.length)body.videoUrls=videoUrls;
+  if(audioUrls.length)body.audioUrls=audioUrls;
   if(typeof input.sourceAssetUrl==='string'&&/^https:\/\//.test(input.sourceAssetUrl))
     body.sourceImage=signingOptions?signedCourseAssetUrl(input.sourceAssetUrl,signingOptions):input.sourceAssetUrl;
   if(typeof input.lastFrameAssetUrl==='string'&&/^https:\/\//.test(input.lastFrameAssetUrl))
     body.lastFrameImage=signingOptions?signedCourseAssetUrl(input.lastFrameAssetUrl,signingOptions):input.lastFrameAssetUrl;
   if(String(job.modality||'').toUpperCase()==='VIDEO'&&body.aspectRatio==='auto')body.aspectRatio='adaptive';
+  const model=providerModel(job?.modelId);
+  if(model==='rh-minimax-h3-multi'||model==='rh-minimax-h3-i2v'){
+    const ratio=body.aspectRatio;
+    const duration=body.durationSeconds;
+    const audio=body.audio;
+    if(ratio!==undefined&&ratio!=='')body.ratio=ratio;
+    if(duration!==undefined&&duration!=='')body.duration=String(duration);
+    body.generateAudio=audio===true;
+    for(const key of ['aspectRatio','durationSeconds','audio','audioRole','inputMode','title'])delete body[key];
+  }
   return body;
 }
 
 function billingFacts(job,route=canvasModelRoute(job),assetOptions={}){
   const displayText=String(job.modelLabel||job.modelId||'').trim();
   const body=generationBody(job,assetOptions);
+  const input=job.input&&typeof job.input==='object'?job.input:{};
+  const params=input.params&&typeof input.params==='object'?input.params:{};
+  const video=String(job.modality||'').toUpperCase()==='VIDEO';
   const category=modalityCategory(job.modality);
   const facts={
     modelKey:route.billingKey,
@@ -156,9 +179,10 @@ function billingFacts(job,route=canvasModelRoute(job),assetOptions={}){
     batchCount:1,
   };
   for(const key of ['aspectRatio','resolution','quality','outputFormat','speed','durationSeconds']) {
-    if(body[key]!==undefined&&body[key]!=='')facts[key]=body[key];
+    const value=params[key]!==undefined?params[key]:body[key];
+    if(value!==undefined&&value!=='')facts[key]=key==='aspectRatio'&&video&&value==='auto'?'adaptive':value;
   }
-  if(body.audio===true)facts.generateAudio=true;
+  if(body.generateAudio===true||params.generateAudio===true||params.audio===true)facts.generateAudio=true;
   if(Array.isArray(body.imageUrls)&&body.imageUrls.length)facts.referenceImageCount=body.imageUrls.length;
   if(category==='text') {
     const characters=String(body.prompt||'').length;
@@ -238,7 +262,15 @@ export function createCanvasGenerationAdapter({
     });
     const payload=await response.json().catch(()=>null);
     if(!response.ok)throw Error(payload?.msg||payload?.error||`RunningHub HTTP ${response.status}`);
-    return unwrap(payload);
+    const data=unwrap(payload);
+    if(data&&typeof data==='object'&&!Array.isArray(data)){
+      Object.defineProperty(data,'__kuaixueResponse',{enumerable:false,value:{
+        status:response.status,code:payload?.code,
+        message:String(payload?.msg||payload?.message||data.msg||data.message||'')
+          .slice(0,500),
+      }});
+    }
+    return data;
   }
 
   async function chatCompletion(route,job){
@@ -284,7 +316,14 @@ export function createCanvasGenerationAdapter({
       }
       let result=await runningHub(route.execution,body,config);
       const taskId=String(result?.taskId||'');
-      if(!taskId)throw Object.assign(Error('RunningHub 未返回任务编号'),{definitive:true});
+      if(!taskId){
+        const upstream=result?.__kuaixueResponse||{};
+        console.error('[canvas-generation] RunningHub task not created',JSON.stringify({
+          model:route.execution,httpStatus:upstream.status,code:upstream.code,
+          message:upstream.message,dataKeys:result&&typeof result==='object'?Object.keys(result).slice(0,30):[],
+        }));
+        throw Object.assign(Error(upstream.message?`RunningHub 未返回任务编号：${upstream.message}`:'RunningHub 未返回任务编号'),{definitive:true});
+      }
       let status=String(result?.status||'QUEUED').toUpperCase();
       const started=Date.now();
       while(!['SUCCESS','FAILED'].includes(status)){

@@ -79,6 +79,7 @@ test('MiniMax-H3 使用正式模型键报价并把自动画幅发送为 adaptive
   assert.equal(quote.executionModelKey,'rh-minimax-h3-multi');
   assert.equal(quoteFacts.modelKey,'minimax/hailuo-h3/multimodal-to-video');
   assert.equal(quoteFacts.aspectRatio,'adaptive');
+  assert.equal(quoteFacts.durationSeconds,5);
   const displayNameCannotRoute=canvasModelRoute({
     modelId:'aicyld-runninghub::rh-minimax-h3-multi',
     modelLabel:'minimax/hailuo-h3/multimodal-to-video',
@@ -163,6 +164,13 @@ test('MiniMax-H3 把对象参考图发送到执行接口，并为课程素材生
   await adapter.generateOrLookup(job);
   const execute=calls.find(call=>call.href.endsWith('/openapi/v2/rh-minimax-h3-multi'));
   assert.deepEqual(execute.body.imageUrls.slice(0,1),['https://cdn.example/reference.png']);
+  assert.equal(execute.body.ratio,'16:9');
+  assert.equal(execute.body.duration,'5');
+  assert.equal(execute.body.generateAudio,false);
+  assert.equal(execute.body.aspectRatio,undefined);
+  assert.equal(execute.body.durationSeconds,undefined);
+  assert.equal(execute.body.audioRole,undefined);
+  assert.equal(execute.body.inputMode,undefined);
   const signed=new URL(execute.body.imageUrls[1]);
   assert.equal(signed.origin,'https://aicyld.com.cn');
   assert.match(signed.searchParams.get('signature')||'',/^[a-zA-Z0-9_-]{43}$/);
