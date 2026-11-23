@@ -1,0 +1,64 @@
+FROM node:24-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54
+
+RUN apt-get -o Acquire::Retries=8 update \
+ && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=8 install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN sed -i \
+      -e 's|http://deb.debian.org/debian-security|https://mirrors.tuna.tsinghua.edu.cn/debian-security|g' \
+      -e 's|http://deb.debian.org/debian|https://mirrors.tuna.tsinghua.edu.cn/debian|g' \
+      /etc/apt/sources.list.d/debian.sources \
+ && apt-get -o Acquire::Retries=8 update \
+ && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=8 install -y --no-install-recommends \
+      chromium \
+      ffmpeg \
+      fonts-noto-cjk \
+      fonts-noto-color-emoji \
+      git \
+      libreoffice-calc \
+      libreoffice-impress \
+      libreoffice-writer \
+      pandoc \
+      poppler-utils \
+      python3 \
+      python3-pip \
+      ripgrep \
+      tesseract-ocr \
+      tesseract-ocr-chi-sim \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --no-cache-dir --break-system-packages \
+      -i https://pypi.tuna.tsinghua.edu.cn/simple \
+      defusedxml \
+      "markitdown[all]" \
+      openpyxl \
+      pandas \
+      pdfplumber \
+      pikepdf \
+      pypdf \
+      PyMuPDF \
+      python-docx \
+      python-pptx \
+      reportlab \
+      XlsxWriter
+
+COPY host.mjs /opt/kuaixue/host.mjs
+COPY host-models.mjs /opt/kuaixue/host-models.mjs
+COPY zcode.cjs /opt/kuaixue/zcode.cjs
+COPY provider /opt/kuaixue/provider
+COPY packages /opt/kuaixue/packages
+COPY node_modules /opt/kuaixue/node_modules
+
+RUN mkdir -p /workspace /run/secrets /home/node/.zcode/v2 \
+ && chown -R node:node /workspace /home/node/.zcode /opt/kuaixue/packages
+
+ENV HOME=/home/node \
+    ZCODE_DATA_BASE_DIR=/home/node \
+    ZCODE_DESKTOP_HOME_DIR=/home/node \
+    ZCODE_AGENT_SERVER_COMMAND=/usr/local/bin/node \
+    ZCODE_AGENT_SERVER_ARGS_JSON='["/opt/kuaixue/zcode.cjs","app-server","--stdio"]' \
+    KUAIXUE_BROWSER_EXECUTABLE=/usr/bin/chromium
+
+USER node
+WORKDIR /workspace
+ENTRYPOINT ["node", "/opt/kuaixue/host-models.mjs"]

@@ -6,6 +6,7 @@ import {
   Heart,
   ImageOff,
   RefreshCw,
+  UserRound,
 } from "lucide-react";
 
 export const typeName = (course) =>
@@ -42,6 +43,15 @@ export function Media({ src, alt = "", className = "", lazy = false, position })
       onError={() => setFailed(src)}
     />
   );
+}
+export function UserAvatar({ user, className = "" }) {
+  const [failed,setFailed]=useState(null);
+  const src=user?.avatarUrl;
+  const initial=String(user?.name||'').trim().slice(0,1).toLocaleUpperCase('zh-CN');
+  return <span className={`user-avatar ${className}`.trim()} aria-hidden="true">
+    {src&&src!==failed?<img src={src} alt="" draggable={false} onError={()=>setFailed(src)}/>:
+      initial?<b>{initial}</b>:<UserRound size={18}/>}
+  </span>;
 }
 export function CourseMark({ course }) {
   return <Media className="course-mark" src={course.thumbnailUrl} />;

@@ -1,8 +1,13 @@
 import {handleCourseAction,sessionPrincipal,readBody} from './course-actions.mjs';
 import {openCoursePlatform,CourseProblem} from './course-platform.mjs';
 import { createAccountReader, WalletUnavailable } from "./account.mjs";
+import {mainSiteRuntimeFromEnv} from './main-site-runtime.mjs';
+import {canvasGenerationFromEnv} from './canvas-generation.mjs';
+import {snapshotLimits} from '../../shared/local-snapshot.mjs';
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, resolve } from "node:path";
 
@@ -19,6 +24,37 @@ function json(res, status, payload) {
     "X-Content-Type-Options": "nosniff",
   });
   res.end(JSON.stringify(payload));
+}
+
+async function readAssetBody(req, limit = 50 * 1024 * 1024,oversizeMessage='素材超出大小限制') {
+  const declared = Number(req.headers['content-length'] || 0);
+  if (!Number.isSafeInteger(declared) || declared < 0 || declared > limit) throw new CourseProblem(413,oversizeMessage);
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > limit) throw new CourseProblem(413,oversizeMessage);
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks,size);
+}
+
+function parseByteRange(header, size) {
+  if (!header) return null;
+  const match = /^bytes=(\d*)-(\d*)$/.exec(String(header).trim());
+  if (!match || (!match[1] && !match[2])) return false;
+  let start = match[1] ? Number(match[1]) : null;
+  let end = match[2] ? Number(match[2]) : null;
+  if (start === null) {
+    const suffix = end;
+    if (!suffix || suffix <= 0) return false;
+    start = Math.max(0, size - suffix);
+    end = size - 1;
+  } else {
+    end = end === null ? size - 1 : Math.min(end, size - 1);
+  }
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start >= size || end < start) return false;
+  return { start, end };
 }
 
 function cursorOffset(cursor) {
@@ -42,11 +78,13 @@ function courseDetails(course) {
     id, versionId, title, subtitle, type, category, level, durationMinutes,
     unlockPricePoints, modelLabels, previewSteps, thumbnailUrl = null, bannerUrl, coverFocus, purchaseCount = null, visualTone,
     icon, learningObjectives, steps, assets, permittedDeliveryModes, galleryImages, introImages, mediaCredit,
+    classroomConfig, vibeModelIds, vibeModelLabels,
   } = course;
   return {
     id, versionId, title, subtitle, type, category, level, durationMinutes,
     unlockPricePoints, modelLabels, previewSteps, thumbnailUrl, bannerUrl, coverFocus, purchaseCount, visualTone, icon,
     learningObjectives, steps, assets, permittedDeliveryModes, galleryImages, introImages, mediaCredit,
+    classroomConfig, vibeModelIds, vibeModelLabels,
   };
 }
 
@@ -97,11 +135,13 @@ export function createApiServer({ catalog = DEFAULT_CATALOG, accountReader, plat
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Vary", "Origin");
       res.setHeader("Access-Control-Allow-Credentials", "true");
+      res.setHeader("Access-Control-Expose-Headers", "ETag, X-Kuaixue-Revision, X-Kuaixue-Snapshot-SHA256, X-Kuaixue-Captured-At");
     }
     if (req.method === "OPTIONS") {
       res.writeHead(204, {
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Accept, Content-Type",
+        "Access-Control-Allow-Headers": "Accept, Content-Type, If-None-Match, X-Kuaixue-Run-Id, X-Kuaixue-File-Name, X-Kuaixue-Asset-Kind, X-Kuaixue-Base-Revision, X-Kuaixue-Snapshot-SHA256",
+        "Access-Control-Expose-Headers": "ETag, X-Kuaixue-Revision, X-Kuaixue-Snapshot-SHA256, X-Kuaixue-Captured-At",
         "Access-Control-Max-Age": "600",
       });
       return res.end();
@@ -136,6 +176,127 @@ export function createApiServer({ catalog = DEFAULT_CATALOG, accountReader, plat
         res.setHeader('Set-Cookie',`kuaixue_session=${session}; Path=/; HttpOnly; Secure; SameSite=None`);
         return json(res,200,{data:{authenticated:true}});
       } catch { return json(res,401,{error:{code:'LOGIN_FAILED'}}); }
+    }
+    if (req.method === 'POST' && url.pathname === '/api/v1/course-assets') {
+      try {
+        if (origin && !allowed.has(origin)) return json(res,403,{error:{code:'ORIGIN_DENIED'}});
+        if (!platform?.uploadAsset) return json(res,503,{error:{code:'ASSET_SERVICE_UNAVAILABLE'}});
+        const principal = await sessionPrincipal(req,identity);
+        if (!principal?.userId) return json(res,401,{error:{code:'SESSION_REQUIRED'}});
+        const runId = String(req.headers['x-kuaixue-run-id'] || '');
+        const kind = String(req.headers['x-kuaixue-asset-kind'] || '');
+        const mime = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+        let fileName;
+        try {fileName = decodeURIComponent(String(req.headers['x-kuaixue-file-name'] || ''));} catch {fileName = '';}
+        if (!/^[a-zA-Z0-9-]{8,80}$/.test(runId) || !['image','video','audio'].includes(kind) || !fileName) {
+          return json(res,400,{error:{code:'INVALID_ASSET',message:'素材参数无效'}});
+        }
+        const bytes = await readAssetBody(req);
+        const asset = await platform.uploadAsset(principal.userId,{runId,fileName,mime,kind,bytes});
+        return json(res,201,{data:asset});
+      } catch (error) {
+        const known = error instanceof CourseProblem;
+        if (!known) console.error('课程素材上传失败',error);
+        return json(res,known?error.status:503,{error:{code:'ASSET_UPLOAD_FAILED',message:known?error.message:'素材服务暂不可用'}});
+      }
+    }
+    const assetMatch = url.pathname.match(/^\/api\/v1\/course-assets\/([a-zA-Z0-9-]{8,80})$/);
+    if (['GET','HEAD'].includes(req.method) && assetMatch) {
+      try {
+        if (!platform?.asset) return json(res,503,{error:{code:'ASSET_SERVICE_UNAVAILABLE'}});
+        const principal = await sessionPrincipal(req,identity);
+        if (!principal?.userId) return json(res,401,{error:{code:'SESSION_REQUIRED'}});
+        const asset = platform.asset(principal.userId,assetMatch[1]);
+        const bytes = await readFile(asset.path);
+        const range = parseByteRange(req.headers.range,bytes.length);
+        if (range === false) {
+          res.writeHead(416,{'Content-Range':`bytes */${bytes.length}`,'Accept-Ranges':'bytes'});
+          return res.end();
+        }
+        const body = range ? bytes.subarray(range.start,range.end+1) : bytes;
+        res.writeHead(range ? 206 : 200,{
+          'Content-Type':asset.mime,
+          'Content-Length':String(body.length),
+          'Content-Disposition':`inline; filename*=UTF-8''${encodeURIComponent(asset.name)}`,
+          'Cache-Control':'private, max-age=31536000, immutable',
+          'Accept-Ranges':'bytes',
+          ...(range ? {'Content-Range':`bytes ${range.start}-${range.end}/${bytes.length}`} : {}),
+          'X-Content-Type-Options':'nosniff',
+        });
+        return req.method === 'HEAD' ? res.end() : res.end(body);
+      } catch (error) {
+        const known = error instanceof CourseProblem;
+        return json(res,known?error.status:404,{error:{code:'ASSET_NOT_FOUND',message:known?error.message:'素材不存在'}});
+      }
+    }
+    if(req.method==='POST'&&url.pathname==='/api/v1/course-runs/local-snapshot'){
+      try{
+        if(origin&&!allowed.has(origin))return json(res,403,{error:{code:'ORIGIN_DENIED'}});
+        if(!platform?.uploadLocalSnapshot)return json(res,503,{error:{code:'SNAPSHOT_SERVICE_UNAVAILABLE',message:'云端工程快照存储待接入'}});
+        const principal=await sessionPrincipal(req,identity);
+        if(!principal?.userId)return json(res,401,{error:{code:'SESSION_REQUIRED'}});
+        const mime=String(req.headers['content-type']||'').split(';')[0].trim().toLowerCase();
+        if(mime!=='application/zip')return json(res,415,{error:{code:'INVALID_SNAPSHOT',message:'工程快照必须是 ZIP'}});
+        const runId=String(req.headers['x-kuaixue-run-id']||'');
+        const baseRevision=Number(req.headers['x-kuaixue-base-revision']);
+        const sha256=String(req.headers['x-kuaixue-snapshot-sha256']||'').toLowerCase();
+        if(!/^[a-zA-Z0-9-]{8,80}$/.test(runId)||!Number.isSafeInteger(baseRevision)||baseRevision<0||
+            !/^[a-f0-9]{64}$/.test(sha256)) {
+          return json(res,400,{error:{code:'INVALID_SNAPSHOT',message:'工程快照参数无效'}});
+        }
+        const bytes=await readAssetBody(req,snapshotLimits.archiveBytes,'工程快照压缩后超过 64 MiB');
+        const digest=createHash('sha256').update(bytes).digest('hex');
+        if(digest!==sha256)return json(res,400,{error:{code:'SNAPSHOT_HASH_MISMATCH',message:'工程快照摘要不一致'}});
+        const data=await platform.uploadLocalSnapshot(principal.userId,{runId,baseRevision,sha256,bytes});
+        res.setHeader('Cache-Control','no-store');
+        return json(res,200,{data});
+      }catch(error){
+        if(!(error instanceof CourseProblem)&&!(Number.isInteger(error.status)&&error.status<500))console.error('工程快照上传失败',error);
+        const upstream=error instanceof CourseProblem?error.status:
+          [401,403].includes(error.status)?503:error.status;
+        return json(res,Number.isInteger(upstream)&&upstream>=400?upstream:503,{
+          error:{code:error.code||'SNAPSHOT_UPLOAD_FAILED',message:error.message||'工程快照上传失败'},
+          ...(Number.isSafeInteger(error.currentRevision)?{currentRevision:error.currentRevision}:{}),
+        });
+      }
+    }
+    if(req.method==='GET'&&url.pathname==='/api/v1/course-runs/local-snapshot'){
+      try{
+        if(origin&&!allowed.has(origin))return json(res,403,{error:{code:'ORIGIN_DENIED'}});
+        if(!platform?.downloadLocalSnapshot)return json(res,503,{error:{code:'SNAPSHOT_SERVICE_UNAVAILABLE',message:'云端工程快照存储待接入'}});
+        const principal=await sessionPrincipal(req,identity);
+        if(!principal?.userId)return json(res,401,{error:{code:'SESSION_REQUIRED'}});
+        const runId=String(url.searchParams.get('runId')||'');
+        if(!/^[a-zA-Z0-9-]{8,80}$/.test(runId))return json(res,400,{error:{code:'INVALID_SNAPSHOT',message:'缺少运行编号'}});
+        const data=await platform.downloadLocalSnapshot(principal.userId,{runId});
+        const etag=`"${data.sha256}"`;
+        const headers={
+          ETag:etag,
+          'X-Kuaixue-Revision':String(data.revision),
+          'X-Kuaixue-Snapshot-SHA256':data.sha256,
+          'X-Kuaixue-Captured-At':data.capturedAt,
+          'Cache-Control':'no-store',
+        };
+        if(req.headers['if-none-match']===etag){
+          res.writeHead(304,headers);
+          return res.end();
+        }
+        res.writeHead(200,{
+          ...headers,
+          'Content-Type':'application/zip',
+          'Content-Length':String(data.bytes.length),
+          'Content-Disposition':`attachment; filename="kuaixue-${runId}.zip"`,
+          'X-Content-Type-Options':'nosniff',
+        });
+        return res.end(data.bytes);
+      }catch(error){
+        if(!(error instanceof CourseProblem)&&!(Number.isInteger(error.status)&&error.status<500))console.error('工程快照下载失败',error);
+        const upstream=error instanceof CourseProblem?error.status:
+          [401,403].includes(error.status)?503:error.status;
+        return json(res,Number.isInteger(upstream)&&upstream>=400?upstream:503,{
+          error:{code:error.code||'SNAPSHOT_DOWNLOAD_FAILED',message:error.message||'工程快照下载失败'},
+        });
+      }
     }
     if (await handleCourseAction(req,res,{path:url.pathname, allowed, identity, platform, json})) return;
     if (req.method === "GET" && ["/api/v1/me", "/api/v1/me/entitlements"].includes(url.pathname)) {
@@ -209,7 +370,23 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     const provider = await import(pathToFileURL(resolve(process.env.KUAIXUE_ACCOUNT_PROVIDER)).href);
     identity = provider.identity;
     desktopAuth = provider.desktopAuth;
-    if (process.env.KUAIXUE_COURSE_DB) platform = openCoursePlatform(process.env.KUAIXUE_COURSE_DB,provider);
+    if (process.env.KUAIXUE_COURSE_DB) {
+      const {openTicketedCoursePlatform} = await import('../../integrations/vibecoding/main-site-tickets.mjs');
+      const runtime=mainSiteRuntimeFromEnv();
+      const canvas=canvasGenerationFromEnv();
+      const runtimeProvider={
+        ...provider,
+        ...(provider.issueLocalModelGrant?{}:{issueLocalModelGrant:runtime?.issueLocalModelGrant}),
+        ...(provider.uploadLocalSnapshot?{}:{uploadLocalSnapshot:runtime?.uploadLocalSnapshot}),
+        ...(provider.downloadLocalSnapshot?{}:{downloadLocalSnapshot:runtime?.downloadLocalSnapshot}),
+        ...(provider.quoteGeneration?{}:{quoteGeneration:canvas?.quoteGeneration}),
+        ...(provider.generateOrLookup?{}:{generateOrLookup:canvas?.generateOrLookup}),
+      };
+      platform = openTicketedCoursePlatform(openCoursePlatform, process.env.KUAIXUE_COURSE_DB, {
+        ...runtimeProvider,
+        assetRoot: process.env.KUAIXUE_ASSET_ROOT,
+      }, process.env.KUAIXUE_RUNTIME_TICKET_DB);
+    }
     accountReader = createAccountReader({ identity, listGrants: platform?.listGrants || provider.listGrants, mainSite: process.env.KUAIXUE_MAIN_SITE_ORIGIN });
   }
   startApiServer({ accountReader, platform, identity, desktopAuth });

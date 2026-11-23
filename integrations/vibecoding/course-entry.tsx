@@ -2,12 +2,18 @@
 import { createRoot } from "react-dom/client";
 import { Root, AppErrorBoundary, ZCodeIntlProvider, generateMobileDeviceFingerprint, setStreamClientId } from "@zcode/ui";
 import "@zcode/ui/styles.css";
+import 'kuaixue-classroom-font.css';
+import 'kuaixue-course-preview.css';
+import { createCourseHtmlPreview } from 'kuaixue-course-html-preview';
 import { connectViaWebSocket } from "@zcode/client";
 import type { IPlatformService, RemoteTarget } from "@zcode/shared";
 
-function createWebPlatform(presets): IPlatformService {
+type CourseWebPlatform = IPlatformService & {
+  classroom: NonNullable<IPlatformService['classroom']> & {openCourseHtmlPreview: (url: string) => boolean};
+};
+function createWebPlatform(presets, openCourseHtmlPreview): CourseWebPlatform {
   return {
-    classroom: {getPresets:async () => presets,getSnapshot:async () => null,
+    classroom: {openCourseHtmlPreview, getPresets:async () => presets,getSnapshot:async () => null,
       onClassroomEnded:() => () => {}, claimClassroomEndedAutoSubmit:async () => false,
       completeClassroomEndedAutoSubmit:async () => {},prepareWorkPreview:async () => null,
       logout:async () => {throw Error('请使用快学账号菜单');},scanWorkspaceFiles:async () => {throw Error('使用快学课程工程');},
@@ -138,6 +144,9 @@ function createWebPlatform(presets): IPlatformService {
 const root = createRoot(document.getElementById('root')!);
 const launch = new URLSearchParams(location.hash.slice(1));
 history.replaceState(null, '', location.pathname);
+function reportToClassroom(message: string) {
+  try { window.parent.postMessage({type:'kuaixue-workbench-error',message}, '*'); } catch {}
+}
 async function enterCourse() {
   const runId = launch.get('run');
   const ticket = launch.get('ticket');
@@ -148,26 +157,32 @@ async function enterCourse() {
     signal: AbortSignal.timeout(12000),
   });
   launch.delete('ticket');
-  if (!result.ok) throw Error();
+  if (!result.ok) {
+    const problem = await result.json().catch(() => null) as {error?:{message?:string;code?:string}} | null;
+    throw Error(problem?.error?.message || problem?.error?.code || `工作区换票失败（${result.status}）`);
+  }
   const runtime = await result.json();
   if (runtime.runId !== runId || !runtime.workspacePath || typeof runtime.socketId !== 'string' ||
       !/^[a-zA-Z0-9_-]{24,256}$/.test(runtime.socketId)) throw Error();
+  if (runtime.previewToken != null && (typeof runtime.previewToken !== 'string' ||
+      !/^[a-zA-Z0-9_-]{43}$/.test(runtime.previewToken))) throw Error();
   const protocol = location.protocol === 'https:' ? 'wss' : location.hostname === '127.0.0.1' ? 'ws' : null;
   if (!protocol) throw Error();
   const services = await connectViaWebSocket(`${protocol}://${location.host}/kuaixue/runtime/ws/${runtime.socketId}`, {
     onClose: () => root.render(<p role="alert">创作连接已断开，请返回课程后重新进入。</p>),
   });
   const registry = await services.modelSelectionService.getView();
-  if (!registry.providers.some(provider => provider.providerId === 'lingdong-platform-gateway' && provider.models.length)) {
-    root.render(<p role="status">本课的创作模型尚未配置，请联系课程运营。</p>);
-    return;
-  }
+  const modelsReady = registry.providers.some(provider => provider.providerId === 'lingdong-platform-gateway' && provider.models.length);
   setStreamClientId(generateMobileDeviceFingerprint());
   root.render(<AppErrorBoundary><ZCodeIntlProvider settingService={services.settingService} broadcastService={services.broadcastService}>
-    <Root services={services} platform={createWebPlatform(runtime.presets ?? [])} initialWorkspaceAbsPath={runtime.workspacePath}
+    {!modelsReady && <div role="status" style={{position:'fixed',top:0,right:12,zIndex:10,pointerEvents:'none'}}>课程工程可编辑 · AI 生成未开放</div>}
+    <Root services={services} platform={createWebPlatform(runtime.presets ?? [], createCourseHtmlPreview(services.fileService, runtime.workspacePath, runtime.previewToken))} initialWorkspaceAbsPath={runtime.workspacePath}
       initialWorkspaceIdentity={runtime.workspaceIdentity} restoreSession={false} allowOpenWorkspace={false}
       supportsSettings={false} preferDirectoryBrowser={false} supportsEmbeddedBrowser={false} allowRemoteWorkspace={false} />
   </ZCodeIntlProvider></AppErrorBoundary>);
 }
-root.render(<p role="status">正在连接本课的灵动 VibeCoding 工作区…</p>);
-void enterCourse().catch(() => root.render(<p role="alert">课程工作区连接失败，请返回课程后重新进入。</p>));
+root.render(<p role="status">正在打开课程工作区…</p>);
+void enterCourse().catch(error => {
+  reportToClassroom(error instanceof Error ? error.message : '课程工作区连接失败');
+  root.render(<p role="alert">课程工作区连接失败，请返回课程后重试。</p>);
+});

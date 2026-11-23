@@ -1,0 +1,9 @@
+:root {
+  --kx-font-ui: "Noto Sans SC", "Source Han Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --font-sans: var(--kx-font-ui);
+  --default-font-family: var(--kx-font-ui);
+}
+
+html, body, button, input, textarea, select, optgroup, option {
+  font-family: var(--kx-font-ui);
+}

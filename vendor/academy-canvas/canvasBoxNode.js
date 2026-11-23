@@ -16,6 +16,7 @@ export function boxParamsLabel(box) {
   const slotType = String(box?.modality || '').toLowerCase();
   // 模型这一格一律显示**显示名**（服务端随框体下发的 modelLabel，运营在「模型显示名」那一页配的）；
   // 没配别名时 modelLabel === 真 ID，所以显示效果与以前一致（2026-09-23 用户口径）。
+  if (box?.generationDisabled) return '此框体已关闭生成';
   const modelName = box?.modelLabel || box?.model;
   if (slotType === 'text') return modelName || '写提示词让 AI 生成文字';
   if (slotType === 'music') {
@@ -56,7 +57,7 @@ export function buildBoxNode(box, current, { asset = null, pending = false } = {
     type: slotType === 'text' ? 'prompt' : slotType === 'music' ? 'audio' : slotType,
     position: { x: 160 + (count % 4) * 280, y: 120 + (count % 3) * 180 },
     data: {
-      title: box.title, slotType, boxId: box.id,
+      title: box.title, slotType, boxId: box.id, generationDisabled: box.generationDisabled === true,
       // 本节课锁定的生成方式（'' = 不锁）：画布据此限制连线数量/类型，并显示在面板上
       inputMode: String(box.inputMode || '').toUpperCase(), inputModeLabel: box.inputModeLabel || '',
       // 平台定过的参数：空字符串表示「没定」，学生可以在画布上自己选。

@@ -1,0 +1,15 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>快学课堂 · 主站授权</title>
+<style>body{font:16px/1.65 system-ui,sans-serif;color:#172033;background:#f6f8fc}main{max-width:32rem;margin:10vh auto;padding:2rem;background:white;border-radius:1rem}button,a{font:inherit}button{padding:.5rem 1.2rem}a{display:inline-block;margin:1rem 0}</style>
+<main><h1>授权快学课堂</h1><p>快学课堂需要读取你的主站账号、积分余额和课程权益。授权本身不会购买课程或扣积分。</p><p role="status" id="status">正在核对主站登录状态…</p><button type="button" id="authorize" disabled>同意并返回快学课堂</button><br><a id="signin">使用主站登录</a></main>
+<script>
+const signin=document.querySelector('#signin'),button=document.querySelector('#authorize'),message=document.querySelector('#status');
+signin.href='/login?redirect='+encodeURIComponent(location.pathname+location.search);
+const token=localStorage.getItem('token');
+async function showAccount(){
+  if(!token){message.textContent='请先在创易灵动主站登录。';return;}
+  try{const response=await fetch('/api/auth/me',{headers:{Authorization:'Bearer '+token},cache:'no-store'});if(!response.ok)throw Error();const me=await response.json();if(!me.id)throw Error();message.textContent='当前主站账号：'+(me.username||me.id);button.disabled=false;}
+  catch{message.textContent='无法确认账号，请重新登录。';}
+}
+button.onclick=async()=>{button.disabled=true;try{const response=await fetch('/kuaixue/desktop/authorize/complete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});if(!response.ok)throw Error();const result=await response.json();location.assign(result.redirect);}catch{message.textContent='授权未完成，请关闭窗口并从快学课堂重试。';}};
+showAccount();
+</script></html>

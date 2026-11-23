@@ -21,6 +21,13 @@ export function createRuntimeBroker({filename, checkAccess, openWorkspace, now=D
     if (!row) throw Error('运行授权已过期或已使用');
     return JSON.parse(row.context);
   }
+  function lookupPreview(token) {
+    if (typeof token !== 'string' || !/^[a-zA-Z0-9_-]{43}$/.test(token)) throw Error('预览授权无效');
+    const row = db.prepare(`SELECT context FROM kx_runtime_tokens WHERE digest=? AND kind='preview' AND expires>?`)
+      .get(digest(token),now());
+    if (!row) throw Error('预览授权已过期');
+    return JSON.parse(row.context);
+  }
   async function validate(context) {
     if (context.mode !== 'VIBECODING' || !await checkAccess(context)) throw Error('课程工作区授权已失效');
   }
@@ -35,11 +42,16 @@ export function createRuntimeBroker({filename, checkAccess, openWorkspace, now=D
       // The location comes from a course-scoped host, never from the learner's request.
       const workspace = await openWorkspace(context);
       if (typeof workspace?.path !== 'string' || !workspace.path) throw Error('工作区未准备好');
-      return {runId,workspacePath:workspace.path,workspaceIdentity:workspace.identity,presets:workspace.presets ?? [],socketId:issue('socket',context,30000)};
+      return {runId,workspacePath:workspace.path,workspaceIdentity:workspace.identity,presets:workspace.presets ?? [],
+        socketId:issue('socket',context,30000),previewToken:issue('preview',context,8*60*60*1000)};
     },
     async claimSocket(id) {
       const context = claim('socket',id,null); await validate(context); return context;
-    },close:()=>db.close(),
+    },
+    async claimPreview(token) {
+      const context = lookupPreview(token); await validate(context); return context;
+    },
+    close:()=>db.close(),
   };
 }
 

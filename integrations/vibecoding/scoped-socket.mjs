@@ -1,6 +1,6 @@
 // Use the `ws` library already used by the Lingdong host. resolveHost returns the
 // provisioned RPC server for this authenticated run, never a client-supplied URL.
-export function createScopedSocketAcceptor({WebSocketServer, WebSocket, resolveHost, checkAccess}) {
+export function createScopedSocketAcceptor({WebSocketServer, WebSocket, resolveHost, checkAccess, connectHost}) {
   const listener = new WebSocketServer({noServer:true, maxPayload:4_000_000});
   return async function acceptScopedSocket({req,socket,head,context}) {
     if (!await checkAccess(context)) throw Error('课程工作区授权已失效');
@@ -10,7 +10,7 @@ export function createScopedSocketAcceptor({WebSocketServer, WebSocket, resolveH
     if (url.username || url.password || url.pathname !== '/' || url.search || url.hash ||
         !(url.protocol === 'wss:' || url.protocol === 'ws:' && ['localhost','127.0.0.1','[::1]'].includes(url.hostname))) throw Error('无效的运行服务');
     url.pathname = '/ws';
-    const upstream = new WebSocket(url,{headers:{Cookie:`zcode_lite_token=${encodeURIComponent(target.token)}`},handshakeTimeout:8000,maxPayload:4_000_000});
+    const upstream = new WebSocket(url,{...(connectHost ? {createConnection:() => connectHost(target)} : {}),headers:{Cookie:`zcode_lite_token=${encodeURIComponent(target.token)}`},handshakeTimeout:8000,maxPayload:4_000_000});
     socket.once('close',() => upstream.terminate());
     upstream.once('error',() => socket.destroy());
     upstream.once('open',() => {

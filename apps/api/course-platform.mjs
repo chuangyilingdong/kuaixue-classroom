@@ -1,14 +1,25 @@
+import {generationModes,generationBinding} from './generation-binding.mjs';
 import {DatabaseSync} from 'node:sqlite';
-import {randomUUID} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
+import {mkdir,writeFile} from 'node:fs/promises';
+import {join} from 'node:path';
 import versioning from '../../electron/course-version.cjs';
 
 export class CourseProblem extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 const reject = (status, message) => { throw new CourseProblem(status, message); };
+function runtimeModelIds(course) {
+  const declared=Array.isArray(course.vibeModelIds)?course.vibeModelIds:[];
+  const legacy=(Array.isArray(course.modelLabels)?course.modelLabels:[])
+    .filter(id=>typeof id==='string'&&/^aicyld-runninghub-llm-(?:cn|global)::[A-Za-z0-9._/:+-]+$/.test(id));
+  return [...new Set([...declared,...legacy])];
+}
 
 // Staging/one-node deployment. The main site owns every wallet debit and refund.
-export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket, quoteGeneration, generateOrLookup} = {}) {
+export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket, issueLocalModelGrant, uploadLocalSnapshot,
+  downloadLocalSnapshot, quoteGeneration, generateOrLookup, assetRoot = null, maxAssetBytes = 50 * 1024 * 1024,
+  maxSnapshotBytes = 64 * 1024 * 1024} = {}) {
   const db = new DatabaseSync(filename);
   db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=4000;
     CREATE TABLE IF NOT EXISTS kx_versions (version TEXT PRIMARY KEY, course TEXT NOT NULL, body TEXT NOT NULL);
@@ -20,6 +31,9 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
     CREATE TABLE IF NOT EXISTS kx_workspaces_saved (run TEXT NOT NULL, mode TEXT NOT NULL, PRIMARY KEY(run,mode));
     CREATE TABLE IF NOT EXISTS kx_generation (id TEXT PRIMARY KEY, run TEXT NOT NULL, node TEXT NOT NULL, user TEXT NOT NULL,
       input TEXT NOT NULL, quote TEXT NOT NULL, status TEXT NOT NULL, result TEXT);
+    CREATE TABLE IF NOT EXISTS kx_assets (id TEXT PRIMARY KEY, user TEXT NOT NULL, run TEXT NOT NULL,
+      name TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL, kind TEXT NOT NULL, object_key TEXT NOT NULL,
+      created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
     CREATE UNIQUE INDEX IF NOT EXISTS kx_pending_node ON kx_generation(run,node) WHERE status='submitted';
     CREATE TABLE IF NOT EXISTS kx_audit (actor TEXT NOT NULL, action TEXT NOT NULL, version TEXT NOT NULL, at TEXT DEFAULT CURRENT_TIMESTAMP);`);
   function transaction(fn) {
@@ -103,7 +117,7 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
     db.prepare("INSERT INTO kx_runs VALUES(?,?,?,0,'[]',NULL) ON CONFLICT(user,version) DO NOTHING").run(randomUUID(),user,versionId);
     const row = db.prepare('SELECT * FROM kx_runs WHERE user=? AND version=?').get(user,versionId);
     const run = {id:row.id,revision:row.revision,course,mode,completed:JSON.parse(row.completed),work:mode === 'CANVAS' && row.canvas ? JSON.parse(row.canvas) : null};
-    run.generationModes = mode === 'CANVAS' && quoteGeneration && generateOrLookup ? (course.modelPolicy || []).map(item => item.modality) : [];
+    run.generationModes = mode === 'CANVAS' && quoteGeneration && generateOrLookup ? generationModes(course) : [];
     if (mode === 'VIBECODING') {
       if (!issueRuntimeTicket) reject(503,'VibeCoding 运行服务待接入');
       run.runtimeTicket = await issueRuntimeTicket({runId:row.id,userId:user,courseId,versionId,mode});
@@ -141,17 +155,120 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
     const course = JSON.parse(row.body);
     checkMode(user,course,'CANVAS');
     if (!quoteGeneration || !generateOrLookup) reject(503,'模型计费服务待接入');
-    return {userId:user,runId,versionId:course.versionId,courseId:course.id,models:course.modelPolicy || []};
+    return course;
+  }
+  async function uploadAsset(user,{runId,fileName,mime,kind,bytes}) {
+    if (!assetRoot) reject(503,'课程素材存储待接入');
+    const row = db.prepare('SELECT body FROM kx_runs JOIN kx_versions USING(version) WHERE id=? AND user=?').get(runId,user);
+    if (!row) reject(403,'课程工作区不可用');
+    const course = JSON.parse(row.body);
+    checkMode(user,course,'CANVAS');
+    const allowed = {
+      image: new Set(['image/jpeg','image/png','image/webp','image/gif']),
+      video: new Set(['video/mp4','video/webm','video/quicktime']),
+      audio: new Set(['audio/mpeg','audio/mp4','audio/aac','audio/ogg','audio/wav','audio/webm']),
+    };
+    if (!allowed[kind]?.has(mime)) reject(415,'不支持的素材类型');
+    if (!Buffer.isBuffer(bytes) || !bytes.length) reject(400,'素材为空');
+    if (bytes.length > maxAssetBytes) reject(413,'素材超出大小限制');
+    if (typeof fileName !== 'string' || !fileName.trim() || fileName.length > 180) reject(400,'素材文件名无效');
+    const digest = createHash('sha256').update(bytes).digest('hex');
+    const extension = {
+      'image/jpeg':'.jpg','image/png':'.png','image/webp':'.webp','image/gif':'.gif',
+      'video/mp4':'.mp4','video/webm':'.webm','video/quicktime':'.mov',
+      'audio/mpeg':'.mp3','audio/mp4':'.m4a','audio/aac':'.aac','audio/ogg':'.ogg','audio/wav':'.wav','audio/webm':'.weba',
+    }[mime];
+    const objectKey = `${digest.slice(0,2)}/${digest}${extension}`;
+    const directory = join(assetRoot,digest.slice(0,2));
+    await mkdir(directory,{recursive:true,mode:0o750});
+    const target = join(assetRoot,objectKey);
+    await writeFile(target,bytes,{flag:'wx',mode:0o640}).catch(error=>{if(error.code!=='EEXIST')throw error;});
+    const id = randomUUID();
+    db.prepare('INSERT INTO kx_assets(id,user,run,name,mime,size,kind,object_key) VALUES(?,?,?,?,?,?,?,?)')
+      .run(id,user,runId,fileName.trim(),mime,bytes.length,kind,objectKey);
+    return {id,name:fileName.trim(),mime,size:bytes.length,kind,
+      assetUrl:`/api/v1/course-assets/${id}`,previewUrl:`/api/v1/course-assets/${id}`};
+  }
+  async function localRuntime(user,{id}) {
+    const row = db.prepare('SELECT body FROM kx_runs JOIN kx_versions USING(version) WHERE id=? AND user=?').get(id,user);
+    if (!row) reject(403,'课程工作区不可用');
+    const course = JSON.parse(row.body);
+    checkMode(user,course,'VIBECODING');
+    if (!issueLocalModelGrant) reject(503,'本机模型授权待主站接入');
+    const allowed = new Set(runtimeModelIds(course));
+    if (!allowed.size) reject(503,'课程版本尚未配置本机模型');
+    const rawUsageLimit = Number(course.classroomConfig?.vibeCoding?.usageLimit ?? 0);
+    const usageLimit = Number.isSafeInteger(rawUsageLimit) && rawUsageLimit >= 0
+      ? Math.min(1000000, rawUsageLimit)
+      : 0;
+    const context = {userId:user,runId:id,courseId:course.id,versionId:course.versionId,mode:'VIBECODING',
+      modelIds:[...allowed],usageLimit};
+    const grant = await issueLocalModelGrant(context);
+    let base;
+    try {base = new URL(grant?.baseUrl);} catch {reject(503,'本机模型授权无效');}
+    if (!(base.protocol === 'https:' || base.protocol === 'http:' && ['127.0.0.1','localhost'].includes(base.hostname)) ||
+        typeof grant?.token !== 'string' || !grant.token || !Number.isSafeInteger(grant.expiresAt) ||
+        grant.expiresAt <= Date.now() || !Array.isArray(grant.modelIds) || !grant.modelIds.length ||
+        grant.modelIds.length !== allowed.size ||
+        grant.modelIds.some(model => typeof model !== 'string' || !allowed.has(model))) {
+      reject(503,'本机模型授权无效');
+    }
+    return {
+      runId:id,
+      userId:user,
+      presets:course.classroomConfig?.vibeCoding?.presetPrompts || [],
+      modelGateway:{baseUrl:base.href,token:grant.token,modelIds:grant.modelIds,expiresAt:grant.expiresAt},
+    };
+  }
+  async function uploadLocalSnapshotRecord(user,{runId,baseRevision,sha256,bytes}) {
+    const row = db.prepare('SELECT body FROM kx_runs JOIN kx_versions USING(version) WHERE id=? AND user=?').get(runId,user);
+    if (!row) reject(403,'课程工作区不可用');
+    const course = JSON.parse(row.body);
+    checkMode(user,course,'VIBECODING');
+    if (!uploadLocalSnapshot) reject(503,'云端工程快照存储待接入');
+    if (!Number.isSafeInteger(baseRevision) || baseRevision < 0 || !/^[a-f0-9]{64}$/.test(sha256) ||
+        !Buffer.isBuffer(bytes) || !bytes.length) reject(400,'工程快照参数无效');
+    if (bytes.length > maxSnapshotBytes) reject(413,'工程快照超出大小限制');
+    const data = await uploadLocalSnapshot({userId:user,runId, courseId:course.id, versionId:course.versionId,
+      mode:'VIBECODING',baseRevision,sha256,bytes});
+    if (data?.runId !== runId || !Number.isSafeInteger(data.revision) || data.revision < 1 ||
+        data.sha256 !== sha256 || !Number.isSafeInteger(data.bytes) || data.bytes !== bytes.length ||
+        typeof data.capturedAt !== 'string' || Number.isNaN(Date.parse(data.capturedAt))) {
+      reject(503,'云端工程快照上传结果待确认');
+    }
+    return {runId, revision:data.revision, sha256:data.sha256, bytes:data.bytes, capturedAt:data.capturedAt};
+  }
+  async function downloadLocalSnapshotRecord(user,{runId}) {
+    const row = db.prepare('SELECT body FROM kx_runs JOIN kx_versions USING(version) WHERE id=? AND user=?').get(runId,user);
+    if (!row) reject(403,'课程工作区不可用');
+    const course = JSON.parse(row.body);
+    checkMode(user,course,'VIBECODING');
+    if (!downloadLocalSnapshot) reject(503,'云端工程快照存储待接入');
+    const data = await downloadLocalSnapshot({userId:user,runId,courseId:course.id,versionId:course.versionId,
+      mode:'VIBECODING'});
+    if (!Buffer.isBuffer(data?.bytes) || !data.bytes.length || !Number.isSafeInteger(data.revision) ||
+        data.revision < 1 || !/^[a-f0-9]{64}$/.test(data.sha256) || typeof data.capturedAt !== 'string' ||
+        Number.isNaN(Date.parse(data.capturedAt))) reject(503,'云端工程快照下载结果待确认');
+    if (data.bytes.length > maxSnapshotBytes) reject(413,'工程快照超出大小限制');
+    return data;
+  }
+  function asset(user,id) {
+    const row = db.prepare('SELECT * FROM kx_assets WHERE id=? AND user=?').get(id,user);
+    if (!row) reject(404,'素材不存在');
+    if (!assetRoot) reject(503,'课程素材存储待接入');
+    return {...row,path:join(assetRoot,row.object_key)};
   }
   async function quote(user,{id,nodeId,modality,input}) {
-    const context = generationContext(user,id);
-    const modelId = context.models.find(item => item.modality === modality)?.modelId;
-    if (!modelId) reject(403,'本课未开放此模型');
+    const course = generationContext(user,id);
     if (typeof nodeId !== 'string' || !nodeId || nodeId.length > 150 || !input || typeof input !== 'object' || Array.isArray(input)) reject(400,'生成参数无效');
+    const binding = generationBinding(course,nodeId,modality,input);
+    if (!binding) reject(403,'本课未开放此框体的模型');
+    const {modelId} = binding;
     const pending = db.prepare("SELECT id,quote FROM kx_generation WHERE run=? AND node=? AND status='submitted'").get(id,nodeId);
     if (pending) return {id:pending.id,points:JSON.parse(pending.quote).points,pending:true};
     const jobId = randomUUID();
-    const job = {jobId,userId:user,runId:id,versionId:context.versionId,courseId:context.courseId,nodeId,modality,modelId,input};
+    const job = {jobId,userId:user,runId:id,versionId:course.versionId,courseId:course.id,nodeId,modality,
+      modelId,modelLabel:binding.modelLabel || '',input:binding.input};
     const offer = await quoteGeneration(job);
     if (!offer?.quoteId || !Number.isSafeInteger(offer.points) || offer.points < 0 || !Number.isSafeInteger(offer.expiresAt) || offer.expiresAt <= Date.now()) reject(503,'报价暂不可用');
     db.prepare("INSERT INTO kx_generation VALUES(?,?,?,?,?,?,'quoted',NULL)").run(jobId,id,nodeId,user,JSON.stringify(job),JSON.stringify(offer));
@@ -189,6 +306,8 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
   function revoke(orderId,transactionId) {
     return db.prepare("UPDATE kx_orders SET status='revoked' WHERE id=? AND receipt=? AND status='confirmed'").run(orderId,transactionId).changes;
   }
-  return {catalog,detail,publish,hide,listGrants,purchase,start,save,works,quote,generate,revoke,hasRuntimeAccess,close:()=>db.close()};
+  return {catalog,detail,publish,hide,listGrants,purchase,start,save,works,quote,generate,uploadAsset,asset,
+    localRuntime,uploadLocalSnapshot:uploadLocalSnapshotRecord,downloadLocalSnapshot:downloadLocalSnapshotRecord,
+    revoke,hasRuntimeAccess,close:()=>db.close()};
 }
 

@@ -2,9 +2,53 @@ import catalogSeed from "../../data/course-catalog.demo.json" with { type: "json
 
 const TONES = new Set(["coral", "lime", "blue", "violet", "yellow", "mint"]);
 const ICONS = new Set(["film", "shapes", "code", "box", "sparkles", "book"]);
+const MEDIA_KEYS = new Set(["url","assetUrl","previewUrl","thumbnailUrl","bannerUrl","posterUrl","referenceUrl","sourceAssetUrl","lastFrameAssetUrl"]);
+
+export function displayModelLabel(value) {
+  const text=String(value || "").trim();
+  if(!text) return "";
+  const parts=text.split("::");
+  const leaf=parts.at(-1).split("/").filter(Boolean);
+  let label=leaf.at(-1) || text;
+  const operation=leaf.findIndex(segment=>/^(?:text|image|video|audio|music)-(?:to)-(?:image|video|audio|music)$/i.test(segment));
+  if(operation>0) label=leaf[0];
+  else if(["stable-token","default","latest"].includes(label.toLowerCase()) && leaf.length>1) label=leaf.at(-2);
+  return label.replace(/-saver$/i,"");
+}
 
 function focusPercent(value) {
   return Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 50;
+}
+
+export function normalizeMediaUrl(value, field = "media") {
+  if (value == null) return null;
+  if (typeof value !== "string") throw new Error(`Course ${field} URL is invalid.`);
+  const text = value.trim();
+  if (!text) return null;
+  if (/[\u0000-\u001f]/.test(text) || text.startsWith("//")) throw new Error(`Course ${field} URL is invalid.`);
+  if (text.startsWith("/")) {
+    if (text.includes("\\")) throw new Error(`Course ${field} URL is invalid.`);
+    return text;
+  }
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(text)) {
+    if (text.includes("\\")) throw new Error(`Course ${field} URL is invalid.`);
+    return text;
+  }
+  let parsed;
+  try { parsed = new URL(text); } catch { throw new Error(`Course ${field} URL is invalid.`); }
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password) throw new Error(`Course ${field} URL is invalid.`);
+  return parsed.href;
+}
+
+function normalizeMediaTree(value, field = "media") {
+  if (Array.isArray(value)) return value.map((item,index) => normalizeMediaTree(item,`${field}[${index}]`));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key,item]) => [
+    key,
+    MEDIA_KEYS.has(key) && (typeof item === "string" || item == null)
+      ? normalizeMediaUrl(item,`${field}.${key}`)
+      : normalizeMediaTree(item,`${field}.${key}`),
+  ]));
 }
 
 export function normalizeCourseItem(item) {
@@ -17,6 +61,8 @@ export function normalizeCourseItem(item) {
   }
   const price = Number(item.unlockPricePoints);
   const duration = Number(item.durationMinutes);
+  const modelLabels = Array.isArray(item.modelLabels) ? item.modelLabels.map(String) : [];
+  const labelMap = item.vibeModelLabels && typeof item.vibeModelLabels === "object" ? item.vibeModelLabels : {};
   if (!item.id || !item.title || !["CANVAS", "VIBECODING"].includes(type) || !Number.isInteger(price) || price < 0) {
     throw new Error("Course catalog item is missing required fields.");
   }
@@ -33,11 +79,13 @@ export function normalizeCourseItem(item) {
     duration: Number.isFinite(duration) && duration > 0 ? `约 ${duration} 分钟` : "时长待定",
     durationMinutes: Number.isFinite(duration) && duration > 0 ? duration : null,
     price,
-    models: Array.isArray(item.modelLabels) ? item.modelLabels.map(String) : [],
+    models: [...new Set(modelLabels.map(label => typeof labelMap[label] === "string" && labelMap[label].trim()
+      ? labelMap[label].trim()
+      : displayModelLabel(label)).filter(Boolean))],
     steps: Array.isArray(item.previewSteps) ? item.previewSteps.map(String) : [],
-    bannerUrl: typeof item.bannerUrl === "string" ? item.bannerUrl.trim() || null : null,
+    bannerUrl: normalizeMediaUrl(item.bannerUrl,"bannerUrl"),
     coverPosition: `${focusPercent(item.coverFocus?.x)}% ${focusPercent(item.coverFocus?.y)}%`,
-    thumbnailUrl: item.thumbnailUrl ? String(item.thumbnailUrl) : null,
+    thumbnailUrl: normalizeMediaUrl(item.thumbnailUrl,"thumbnailUrl"),
     purchaseCount: Number.isSafeInteger(item.purchaseCount) && item.purchaseCount >= 0 ? item.purchaseCount : null,
     tone: TONES.has(item.visualTone) ? item.visualTone : "coral",
     icon: ICONS.has(item.icon) ? item.icon : type === "CANVAS" ? "film" : "code",
@@ -46,8 +94,11 @@ export function normalizeCourseItem(item) {
 
 function normalizeImages(images) {
   if (!Array.isArray(images)) return [];
-  return images.filter((image) => typeof image?.url === "string" && image.url.trim())
-    .map(({ url, alt }) => ({ url, alt: String(alt || "") }));
+  return images.map(image => {
+    if (!image || typeof image !== "object") throw new Error("Course image is invalid.");
+    const url = normalizeMediaUrl(image.url,"image.url");
+    return url ? { url, alt: String(image.alt || "") } : null;
+  }).filter(Boolean);
 }
 
 export function normalizeCourseDetail(item) {
@@ -66,6 +117,20 @@ export function normalizeCourseDetail(item) {
       deliverable: String(step.deliverable),
     };
   });
+  const labels=item.vibeModelLabels&&typeof item.vibeModelLabels==='object'?item.vibeModelLabels:{};
+  const declaredIds=Array.isArray(item.vibeModelIds)?item.vibeModelIds.map(String).filter(Boolean):[];
+  const legacyIds=(Array.isArray(item.modelLabels)?item.modelLabels.map(String):[])
+    .filter(id=>/^aicyld-runninghub-llm-(?:cn|global)::[A-Za-z0-9._/:+-]+$/.test(id));
+  const vibeModelIds=[...new Set([...declaredIds,...legacyIds])];
+  const vibeModelLabels=Object.fromEntries(vibeModelIds.map(id=>[id,
+    typeof labels[id]==='string'&&labels[id].trim()?labels[id].trim():displayModelLabel(id)]));
+  const materialGroups=normalizeMediaTree(item.materialGroups ?? [],"materialGroups");
+  for(const group of materialGroups){
+    for(const material of group.materials || []){
+      const box=material?.snapshot?.box;
+      if(box?.model&&!box.modelLabel)box.modelLabel=displayModelLabel(box.model);
+    }
+  }
   return {
     ...course,
     galleryImages: normalizeImages(item.galleryImages),
@@ -73,8 +138,12 @@ export function normalizeCourseDetail(item) {
     mediaCredit: String(item.mediaCredit || ""),
     learningObjectives: item.learningObjectives.map(String),
     steps,
-    assets: item.assets,
-    materialGroups: item.materialGroups ?? [],canvasSnapshot:item.canvasSnapshot ?? null,modelPolicy:item.modelPolicy ?? [],
+    assets: normalizeMediaTree(item.assets,"assets"),
+    materialGroups,
+    canvasSnapshot:item.canvasSnapshot ?? null,modelPolicy:item.modelPolicy ?? [],
+    classroomConfig:item.classroomConfig && typeof item.classroomConfig==='object' ? item.classroomConfig : {},
+    vibeModelIds,
+    vibeModelLabels,
   };
 }
 

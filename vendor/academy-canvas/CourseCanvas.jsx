@@ -6,11 +6,13 @@ import {Icon} from './icons.jsx';
 import './classroom.css';
 const PROMPT_SLOT_TYPES = ['text','prompt','image','video','animation','music','audio'];
 const PROMPT_SLOT_ACTION = {text:'写文字',prompt:'写文字',image:'生图',video:'生视频',animation:'生动画',music:'生音乐',audio:'生音频'};
-export function CourseCanvas({initial,course,onChange,beforeGenerate,onGenerateNode}) {
-  const project = {data:{...course,canvasSnapshot:initial,capabilities:[...new Set([...(course.modelPolicy || []).map(item=>item.modality.toLowerCase()),...(course.materialGroups || []).flatMap(group=>group.materials || []).map(material=>material.snapshot?.box?.modality?.toLowerCase()).filter(Boolean)])]}};
+export function CourseCanvas({initial,course,onChange,beforeGenerate,onGenerateNode,onUploadFiles}) {
+  const project = {data:{...course,canvasSnapshot:initial,capabilities:[...new Set([...(course.modelPolicy || []).map(item=>item.modality.toLowerCase()),...(course.materialGroups || []).flatMap(group=>group.materials || []).map(material=>(material.snapshot?.box?.modality === 'AUDIO' ? 'music' : material.snapshot?.box?.modality?.toLowerCase())).filter(Boolean)])]}};
   const [canvasSnapshot,setCanvasSnapshot] = useState(initial);
   const [draft,updateDraft] = useState(initial);
-  const setDraft = useCallback(value=>{updateDraft(value);onChange(value);},[onChange]);
+  const draftRef = useRef(initial);
+  const setDraft = useCallback(value=>{draftRef.current=value;setCanvasSnapshot(value);updateDraft(value);onChange(value);},[onChange]);
+  const changeDraft = useCallback(updater=>setDraft(updater(draftRef.current)),[setDraft]);
   const [canvasRevision,setCanvasRevision] = useState(0);
   const [toolPanel,setToolPanel] = useState(null), [sidebarCollapsed,setSidebarCollapsed] = useState(false);
   const [focusRequest,setFocusRequest] = useState(null),[entranceRequest,setEntranceRequest] = useState(null);
@@ -61,6 +63,34 @@ export function CourseCanvas({initial,course,onChange,beforeGenerate,onGenerateN
     setMessage(`已将“${material.title || '课堂素材'}”加入画布。`);
   }
 
+  async function uploadLocalFiles(files,position) {
+    if (!editable || !onUploadFiles || !files?.length) return;
+    setToolPanel('local');
+    for (const [index,file] of files.entries()) {
+      const kind = file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'audio' : '';
+      if (!kind) {setMessage(`不支持「${file.name || '素材'}」的文件类型。`);continue;}
+      const id = `local-${crypto.randomUUID?.() || Date.now().toString(36)}`;
+      const node = {id,type:kind,position:{x:(position?.x || 160)+index*32,y:(position?.y || 120)+index*28},
+        data:{title:file.name || '本地素材',uploaded:true,uploading:true,uploadError:'',mime:file.type,size:file.size}};
+      changeDraft(current=>({...current,nodes:[...(current?.nodes || []),node]}));
+      setCanvasRevision(value=>value+1);
+      try {
+        const asset = await onUploadFiles(file);
+        changeDraft(current=>({...current,nodes:(current?.nodes || []).map(item=>item.id===id?{...item,data:{
+          ...item.data,assetUrl:asset.assetUrl,previewUrl:asset.previewUrl,fileAssetId:asset.id,uploading:false,uploadError:'',
+        }}:item)}));
+        setCanvasRevision(value=>value+1);
+        setMessage(`已上传「${file.name || '素材'}」。`);
+      } catch (error) {
+        changeDraft(current=>({...current,nodes:(current?.nodes || []).map(item=>item.id===id?{...item,data:{
+          ...item.data,uploading:false,uploadError:error.message || '素材上传失败',
+        }}:item)}));
+        setCanvasRevision(value=>value+1);
+        setMessage(error.message || '素材上传失败。');
+      }
+    }
+  }
+
   const generationBoxes = Array.isArray(project.data.generationBoxes) ? project.data.generationBoxes : [];
 
 
@@ -80,7 +110,8 @@ export function CourseCanvas({initial,course,onChange,beforeGenerate,onGenerateN
     const raw = material.snapshot?.box && typeof material.snapshot.box === 'object' ? material.snapshot.box : {};
     return {
       id: material.id, title: material.title,
-      modality: String(raw.modality || '').toUpperCase(), model: raw.model || '',
+      modality: raw.modality === 'AUDIO' ? 'MUSIC' : String(raw.modality || '').toUpperCase(), model: raw.model || '',
+      paramOptions: raw.paramOptions, mode: raw.mode, generationDisabled: raw.modelBinding === 'BOX' && !raw.model,
 
 
 
@@ -270,7 +301,7 @@ export function CourseCanvas({initial,course,onChange,beforeGenerate,onGenerateN
       </aside>
       <div className="cv-main">
         
-        <div className="cv-viewport"><CanvasEditor key={canvasRevision} initialSnapshot={canvasSnapshot || project.data.canvasSnapshot} capabilities={capabilities} readOnly={!editable} allowNodeCreation={false} boxModalities={boxModalities} showStarter={false} beforeGenerate={beforeGenerate} onGenerateNode={onGenerateNode} onRequestMaterials={openMaterialsPanel} onChange={setDraft} focusRequest={focusRequest} entranceRequest={entranceRequest} placementRef={placementRef} /></div>
+        <div className="cv-viewport"><CanvasEditor key={canvasRevision} initialSnapshot={canvasSnapshot || project.data.canvasSnapshot} capabilities={capabilities} readOnly={!editable} allowNodeCreation={false} boxModalities={boxModalities} showStarter={false} beforeGenerate={beforeGenerate} onGenerateNode={onGenerateNode} onUploadFiles={uploadLocalFiles} onRequestMaterials={openMaterialsPanel} onChange={setDraft} focusRequest={focusRequest} entranceRequest={entranceRequest} placementRef={placementRef} /></div>
       </div>
     </section>
     {message && <div className={`cv-toast ${''}`}>{message}</div>}

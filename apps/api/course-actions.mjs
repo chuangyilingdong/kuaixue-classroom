@@ -6,6 +6,7 @@ export async function sessionPrincipal(req, identity) {
 }
 const methods = new Map([
   ['/api/v1/course-runs/works','works'],
+  ['/api/v1/course-runs/local-runtime','localRuntime'],
   ['/api/v1/generations/quote','quote'], ['/api/v1/generations/confirm','generate'],
   ['/api/v1/course-purchases','purchase'], ['/api/v1/course-runs/open','start'], ['/api/v1/course-runs/save','save'],
 ]);
@@ -37,6 +38,7 @@ export async function handleCourseAction(req,res,{path,allowed,identity,platform
     json(res,200,{data});
   } catch (error) {
     const known = error instanceof CourseProblem;
+    if (!known) console.error('[kuaixue/course-action]', method, error?.stack || error);
     json(res,known ? error.status : 503,{error:{code:'COURSE_ACTION_FAILED',message:known ? error.message : '课程服务暂不可用'}});
   }
   return true;

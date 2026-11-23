@@ -1,0 +1,11 @@
+.kx-html-preview {
+  width: calc(100% - 32px); height: calc(100% - 32px); max-width: none; max-height: none;
+  margin: auto; padding: 0; border: 1px solid #515158; border-radius: 10px;
+  color: #f1f1f3; background: #202023; box-sizing: border-box;
+}
+.kx-html-preview[open] { display: flex; flex-direction: column; }
+.kx-html-preview::backdrop { background: rgb(0 0 0 / 60%); }
+.kx-html-preview header { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; }
+.kx-html-preview button { padding: 4px 10px; border: 1px solid #666; border-radius: 5px; cursor: pointer; }
+.kx-html-preview p { margin: 16px; }
+.kx-html-preview iframe { width: 100%; flex: 1; min-height: 0; border: 0; background: white; color-scheme: light; }

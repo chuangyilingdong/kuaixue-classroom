@@ -3,7 +3,19 @@ export function readAccount(profile, wallet, grants) {
   if (!profile || typeof profile.id !== 'string' || !profile.id || typeof profile.username !== 'string' || !profile.username.trim()) throw new Error('Invalid account');
   if (!Number.isSafeInteger(wallet?.total) || wallet.total < 0) throw new Error('Invalid wallet');
   const entitlements = readEntitlements(profile.id, grants);
-  return { user: { id: profile.id, name: profile.username }, points: wallet.total, entitlements };
+  return { user: { id: profile.id, name: profile.username,
+    ...(safeAvatar(profile.avatar) ? {avatarUrl:safeAvatar(profile.avatar)} : {}) }, points: wallet.total, entitlements };
+}
+
+function safeAvatar(value) {
+  if(typeof value!=='string')return '';
+  const text=value.trim();
+  if(!text||text.includes('\\')||/[\u0000-\u001f]/.test(text))return '';
+  if(text.startsWith('/')&&!text.startsWith('//'))return text;
+  try{
+    const url=new URL(text);
+    return url.protocol==='https:'&&!url.username&&!url.password?url.href:'';
+  }catch{return '';}
 }
 
 export function readEntitlements(userId, grants) {

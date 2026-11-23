@@ -9,17 +9,20 @@ import {
   RefreshCw,
   Settings2,
   Sun,
-  UserRound,
   X,
 } from "lucide-react";
 import { loadCourseCatalog } from "../services/courseCatalog.js";
 import CatalogWorkspace from "./CatalogWorkspace.jsx";
 import CourseDetail from "./CourseDetail.jsx";
 import LearningView from "./LearningView.jsx";
-import { localWorkshop, loadLearningAccount } from "../services/learningAccount.js";
+import LoginScreen from './LoginScreen.jsx';
+import OfficialSignInGate from './OfficialSignInGate.jsx';
+import { localWorkshop, loadLearningAccount, offlinePreview } from "../services/learningAccount.js";
 import { courseClient } from '../services/courseClient.js';
 import WorksView from './WorksView.jsx';
 import Home from "./Home.jsx";
+import kxClassMark from '../assets/kx-class-mark.png';
+import { UserAvatar } from './CourseParts.jsx';
 
 const CourseRun = lazy(() => import('./CourseRun.jsx'));
 
@@ -41,10 +44,25 @@ function initialFavorites() {
   }
 }
 export default function App() {
+  const [account, setAccount] = useState(null);
+  const live = window.location.protocol === 'kuaixue:';
+  async function enterDemo() {
+    const demo = await loadLearningAccount();
+    if (demo.demo !== true) throw new Error('演示账户暂不可用。');
+    setAccount(demo);
+  }
+  if (!account && live) return <OfficialSignInGate onSignedIn={setAccount} />;
+  if (!account) return <LoginScreen
+    onDemo={!live && offlinePreview ? enterDemo : undefined}
+  />;
+  return <Classroom initialAccount={account} onSignedOut={() => setAccount(null)} />;
+}
+
+function Classroom({ initialAccount, onSignedOut }) {
   const [theme, setTheme] = useState(() =>
     stored("kuaixue-theme", "dark") === "light" ? "light" : "dark",
   );
-  const [route, setRoute] = useState(() => window.location.hash === "#account" ? "learning" : "home");
+  const [route, setRoute] = useState(() => window.location.hash === '#account' ? 'learning' : 'home');
   const [run, setRun] = useState(null);
   const saveBeforeLeaving = useRef(null);
   const [course, setCourse] = useState(null);
@@ -60,27 +78,31 @@ export default function App() {
     settingsTriggerRef = useRef(null),
     searchInputRef = useRef(null),
     returnFocus = useRef(null);
-  const [learning, setLearning] = useState({});
+  const [learning, setLearning] = useState({ account: initialAccount });
   const accountRequest = useRef(null);
   async function readAccount() {
     accountRequest.current?.abort();
     const controller = new AbortController();
     accountRequest.current = controller;
-    setLearning({ loading: true });
+    setLearning(previous => ({ ...previous, loading: true, error: null }));
     try {
       const account = await loadLearningAccount({ signal: controller.signal });
       if (!controller.signal.aborted) setLearning({ account });
     } catch (error) {
-      if (!controller.signal.aborted) setLearning({ error: error.message || "账户读取失败。" });
+      if (controller.signal.aborted) return;
+      if (error.status === 401) { onSignedOut(); return; }
+      setLearning(previous => ({ ...previous, loading: false, error: error.message || '账户读取失败。' }));
     }
   }
   async function leaveAccount() {
     accountRequest.current?.abort();
-    if (courseClient?.signOut && !learning.account?.demo) {
+    if (!initialAccount.demo) {
       try { await courseClient.signOut(); }
-      catch { setNotice('登出未确认，请重试。'); return; }
+      catch (error) {
+        if (error.status !== 401) { setNotice('登出未确认，请重试。'); return; }
+      }
     }
-    setLearning({});
+    onSignedOut();
   }
   useEffect(() => () => accountRequest.current?.abort(), []);
   function leaveRun() {
@@ -212,7 +234,7 @@ export default function App() {
           aria-label="快学课堂首页"
           onClick={() => goto("home")}
         >
-          <span>K</span>
+          <img src={kxClassMark} alt="" draggable={false}/>
         </button>
         <nav>
           {controls.map(([label, Icon, action, active]) => (
@@ -243,7 +265,7 @@ export default function App() {
             title="我的账户"
             onClick={() => goto("learning")}
           >
-            <UserRound size={19} />
+            <UserAvatar user={learning.account?.user}/>
           </button>
         </div>
       </aside>

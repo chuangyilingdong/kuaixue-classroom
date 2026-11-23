@@ -11,7 +11,7 @@
   --cv-primary: #a3fe44;
   --cv-primary-fg: #102000;
   --cv-motion: 200ms;
-  --cv-font: 'Geist', 'Noto Sans SC', ui-sans-serif, -apple-system, 'Segoe UI Variable Text', 'Segoe UI', system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --cv-font: var(--kx-font-ui);
 }
 .cv-shell { font-family: var(--cv-font); display: flex; flex-direction: column; height: 100vh; overflow: hidden; color: var(--cv-text); background: var(--cv-bg); }
 

@@ -1,0 +1,11 @@
+--- a/formal-server.cjs
++++ b/formal-server.cjs
+@@ -48,3 +48,8 @@
+       const nonce = provider.desktopAuth.begin({ challenge, state: params.get('state') });
+       const cookie = `kx_auth_flow=${nonce}; Path=/kuaixue/desktop/authorize; Max-Age=300; HttpOnly; Secure; SameSite=Lax`;
++      if (params.get('ui') === 'kx-class-v1') {
++        res.writeHead(303, { Location: '/kuaixue/sign-in/', 'Cache-Control': 'no-store',
++          'Set-Cookie': cookie, 'Referrer-Policy': 'no-referrer' });
++        return res.end();
++      }
+       const html = consentPage;

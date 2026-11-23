@@ -15,13 +15,19 @@
     "dev:api": "cross-env KUAIXUE_API_PORT=4175 node apps/api/server.mjs",
     "dev:web": "cross-env VITE_KUAIXUE_API_BASE_URL=http://127.0.0.1:4175 vite --host 127.0.0.1",
     "build": "vite build",
+    "build:course-admin": "node scripts/build-course-admin.mjs",
+    "build:vibe:host": "node scripts/build-vibe-host.mjs",
+    "build:vibe:handoff": "python scripts/package-vibe-handoff.py",
+    "package:course-service": "node scripts/package-course-service.mjs",
     "package:win:dir": "pnpm build && electron-builder --win --dir",
     "package:win": "pnpm build && electron-builder --win nsis",
+    "package:win:official": "vite build --mode official && electron-builder --win nsis --config.directories.output=release/classroom-official --config.electronDist=node_modules/electron/dist",
     "test": "node --test",
     "start": "electron .",
     "course:images": "powershell -NoProfile -STA -ExecutionPolicy Bypass -File scripts/select-course-images.ps1"
   },
   "devDependencies": {
+    "@electron/asar": "3.4.1",
     "@vitejs/plugin-react": "^4.3.4",
     "@xyflow/react": "12.11.5",
     "concurrently": "^9.1.2",
@@ -32,7 +38,8 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "vite": "^6.4.1",
-    "wait-on": "^8.0.3"
+    "wait-on": "^8.0.3",
+    "ws": "8.18.3"
   },
   "build": {
     "appId": "com.kuaixue.classroom",
@@ -44,15 +51,17 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "shared/**/*",
       "package.json",
       "data/course-catalog.demo.json",
       "integrations/vibecoding/*.mjs"
     ],
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         "nsis"
       ],
-      "signAndEditExecutable": false
+      "signExecutable": false
     },
     "nsis": {
       "oneClick": false,
@@ -61,6 +70,9 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "快学课堂",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
       "deleteAppDataOnUninstall": false
     },
     "artifactName": "Kuaixue-${version}-${arch}.${ext}",
@@ -82,5 +94,9 @@
         ]
       }
     ]
+  },
+  "dependencies": {
+    "yauzl": "3.2.0",
+    "yazl": "3.3.1"
   }
 }

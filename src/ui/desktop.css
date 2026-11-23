@@ -1,3 +1,5 @@
+@import '../../electron/classroom-font.css';
+
 * {
   box-sizing: border-box;
 }
@@ -6,12 +8,6 @@ body,
 #root {
   margin: 0;
   height: 100%;
-}
-body,
-button,
-input,
-select {
-  font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
 }
 button,
 input,
@@ -92,21 +88,11 @@ button:disabled {
   height: 80px;
   display: grid;
   place-items: center;
-  color: #ffbd35;
 }
-.brand span {
-  display: grid;
-  place-items: center;
-  width: 33px;
-  height: 32px;
-  font-family: Arial, sans-serif;
-  font-size: 24px;
-  font-weight: 900;
-  font-style: italic;
-  color: #211e18;
-  background: #ffbc32;
-  clip-path: polygon(5% 4%, 98% 48%, 7% 99%);
-  padding-right: 8px;
+.brand img {
+  width: 38px;
+  height: 34px;
+  object-fit: contain;
 }
 .rail nav,
 .rail-bottom {
@@ -152,6 +138,26 @@ button:disabled {
   height: 36px;
   background: var(--surface);
   border: 1px solid var(--line);
+  overflow: hidden;
+}
+.user-avatar {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: inherit;
+  background: var(--surface-soft, var(--surface));
+  color: var(--text-primary, inherit);
+}
+.user-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.user-avatar b {
+  font-size: 14px;
+  font-weight: 650;
 }
 .window-drag {
   position: fixed;
@@ -1213,6 +1219,13 @@ button:disabled {
 .learning-account { margin-top: 24px; }
 .learning-account b { font-size: 30px; }
 .learning-account p { margin: 16px 0 3px; }
+.account-avatar {
+  width: 42px;
+  height: 42px;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+}
 .learning-account footer { margin-top: 16px; }
 .learning-account button, .learning-grants button, .learning-browse { padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; }
 .learning-browse { margin: 20px 0; }
@@ -1221,4 +1234,3 @@ button:disabled {
 .learning-grants small { display: block; color: var(--muted); margin-top: 5px; }
 .learning-grants button { margin-left: auto; }
 .grant-status { text-align: center; background: var(--hover); border-radius: 6px; padding: 12px; margin: 0; }
-.official-account-entry { margin-top: 24px; padding-bottom: 4px; border-bottom: 1px solid var(--line); max-width: 690px; }

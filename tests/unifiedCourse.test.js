@@ -70,11 +70,23 @@ test('staging: published dual version, confirmed wallet order, recovery, refund 
 
 test('desktop login binds callback state, verifier and domain to this launch',()=>{
   const flow = oauth.begin({authorizeUrl:'https://www.aicyld.com.cn/auth',apiOrigin:'https://kt.example',clientId:'staging'});
+  assert.equal(flow.authorize.searchParams.get('ui'),'kx-class-v1');
   assert.equal(flow.authorize.searchParams.get('code_challenge'),createHash('sha256').update(flow.verifier).digest('base64url'));
+  assert.equal(oauth.isCallbackUrl(flow.redirect,flow),true);
   assert.equal(oauth.readCallback(flow.redirect+'?code=test&state='+flow.state,flow),'test');
   assert.throws(()=>oauth.readCallback(flow.redirect+'?code=test&state=wrong',flow));
   assert.equal(oauth.readCallback('https://other.example/?code=test',flow),null);
   assert.throws(()=>workbenchUrl('https://kt.example','https://kt.example','run','a'.repeat(32)));
+});
+
+test('workbench requires a separate HTTPS origin and puts the runtime ticket only in the fragment',()=>{
+  const parent = 'kuaixue://classroom', ticket = 'sample'.repeat(8);
+  for (const origin of [undefined,'','not a URL','http://vibe.example','https://vibe.example/workbench','https://vibe.example?x','https://user@vibe.example']) {
+    assert.throws(()=>workbenchUrl(origin,parent,'run-1',ticket),/VITE_KUAIXUE_VIBE_ORIGIN/);
+  }
+  const url = new URL(workbenchUrl('https://kuaixue-vibe.aicyld.com.cn',parent,'run-1',ticket));
+  assert.equal(url.origin + url.pathname + url.search,'https://kuaixue-vibe.aicyld.com.cn/kuaixue/workbench/');
+  assert.deepEqual(Object.fromEntries(new URLSearchParams(url.hash.slice(1))),{run:'run-1',ticket});
 });
 
 test('legacy offline single-artifact runs migrate on save and recover after restart',t=>{
@@ -155,4 +167,14 @@ test('Vibe host only writes provider credentials for the current entitled course
   await provisionCourseProvider(options);
   const {config} = JSON.parse(await readFile(join(profile,'.zcode','v2','provider_config.json'),'utf8'));
   assert.deepEqual(config.providerConfigRules.providerRules[0].config.personalModelIds,['course-model']);
+});
+
+test('a closed production sale is distinguishable from an unconfirmed order', async () => {
+  const clientFor = code => createCourseClient({
+    base: 'https://example.invalid',
+    fetchImpl: async () => Response.json({error:{code}}, {status:423}),
+    account: () => assert.fail('a rejected purchase should not refresh the account'),
+  });
+  await assert.rejects(clientFor('PURCHASES_DISABLED').purchase('course','version'), /正式购课暂未开放/);
+  await assert.rejects(clientFor('OTHER_LOCK').purchase('course','version'), /请求未确认/);
 });

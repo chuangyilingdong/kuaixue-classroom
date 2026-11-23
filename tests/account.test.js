@@ -6,7 +6,7 @@ import { createAccountReader } from '../apps/api/account.mjs';
 import { loadLearningAccount } from '../src/services/learningAccount.js';
 
 const grant = { userId:'u1', courseId:'storyboard-to-film', versionId:'demo-storyboard-v1', status:'active' };
-function reader({ grants = [grant], profile = { id:'u1', username:'测试学员' }, wallet = { total: 0 }, onRead = () => {} } = {}) {
+function reader({ grants = [grant], profile = { id:'u1', username:'测试学员', avatar:'https://cdn.example/avatar.png' }, wallet = { total: 0 }, onRead = () => {} } = {}) {
   return createAccountReader({
     mainSite:'https://staging.invalid',
     identity: async session => session === 'valid' ? { userId:'u1', mainSiteToken:'fixture-token' } : null,
@@ -31,7 +31,7 @@ test('authenticated adapter reads authoritative zero balance, active and revoked
   const fetchImpl = (url,init) => fetch(url,{...init,headers:{Cookie:'kuaixue_session=valid'}});
   const account = await loadLearningAccount({base,fetchImpl});
   assert.equal(account.demo,false); assert.equal(account.points,0);
-  assert.deepEqual(account.user,{id:'u1',name:'测试学员'});
+  assert.deepEqual(account.user,{id:'u1',name:'测试学员',avatarUrl:'https://cdn.example/avatar.png'});
   assert.deepEqual(account.entitlements.map(g=>g.status),['active','revoked']);
   assert.deepEqual((await (await fetchImpl(base+'/api/v1/me/entitlements?userId=other')).json()).data.entitlements,account.entitlements);
 });

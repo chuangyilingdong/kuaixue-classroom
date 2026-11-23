@@ -76,8 +76,6 @@ export default function Home({
                   <Clock3 size={14} />
                   {course.duration}
                   <i /> {course.level}
-                  <i />
-                  {course.models.join(" · ")}
                 </div>
                 <p>
                   {course.subtitle}

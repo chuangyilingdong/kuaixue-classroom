@@ -1038,7 +1038,7 @@ function NodeEditPanel({ node, onRequestMaterials, boxModalities = [] }) {
   //    再点必被服务端拒（`GENERATION_BOX_USED`「该生成框体已经生成过了」）—— 留着按钮就是误导。
   const boxModality = { image: 'IMAGE', video: 'VIDEO', animation: 'VIDEO', text: 'TEXT', prompt: 'TEXT', music: 'MUSIC', audio: 'MUSIC' }[slotType] || '';
   const needsBox = Boolean(boxModality) && boxModalities.includes(boxModality);
-  const canGenerateHere = !needsBox || Boolean(data.boxId);
+  const canGenerateHere = !data.generationDisabled && (!needsBox || Boolean(data.boxId));
   const alreadyProduced = state === 'done' || state === 'asset';
   // 不能在这里生成的节点：**别把上一次点出来的报错继续挂在面板上**（那是"点了本来就不该点的按钮"造成的），
   // 状态胶囊回到「未生成」。能生成的节点照旧：真失败仍然要看得见。

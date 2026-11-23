@@ -1,4 +1,19 @@
 const {randomUUID} = require("node:crypto");
+function displayModelLabel(value) {
+  const text=String(value||'').trim();
+  if(!text)return '';
+  const parts=text.split('::');
+  const leaf=parts.at(-1).split('/').filter(Boolean);
+  let label=leaf.at(-1)||text;
+  if(['stable-token','default','latest'].includes(label.toLowerCase())&&leaf.length>1)label=leaf.at(-2);
+  return label.replace(/-saver$/i,'');
+}
+function modelLabels(value) {
+  if(value==null)return {};
+  if(typeof value!=='object'||Array.isArray(value))throw Error('请检查模型显示名称');
+  return Object.fromEntries(Object.entries(value).filter(([id,label])=>typeof id==='string'&&id&&typeof label==='string'&&label.trim())
+    .map(([id,label])=>[id,label.trim()]));
+}
 function text(value, label, limit = 300) {
   if (typeof value !== 'string' || !value.trim() || value.length > limit) throw new Error(`请检查${label}`);
   return value.trim();
@@ -38,8 +53,12 @@ function buildCourseVersion(draft, base = {}) {
   const ids = modes.includes('VIBECODING') ? (draft.vibeModelIds ?? base.vibeModelIds ?? []) : [];
   if (!Array.isArray(ids) || ids.length > 30) throw Error('请检查 VibeCoding 模型清单');
   const vibeModelIds = [...new Set(ids.map(id => text(id,'模型编号',120)))];
+  const suppliedLabels=modelLabels(draft.vibeModelLabels ?? base.vibeModelLabels);
+  const vibeModelLabels=Object.fromEntries(vibeModelIds.map(id=>[id,suppliedLabels[id]||displayModelLabel(id)]));
+  const suppliedModelLabels=Array.isArray(draft.modelLabels)?draft.modelLabels.map(label=>text(label,'模型显示名称',120)):[];
   const course = { ...base, id, versionId: randomUUID(), title, subtitle: text(draft.subtitle,'课程简介',1000), type, category: base.category || '创作实训', level: base.level || '入门',
-    unlockPricePoints: draft.price, learningObjectives: steps.length ? [steps.at(-1).deliverable] : [], modelPolicy: models, vibeModelIds, modelLabels: [...new Set([...models.map(item => item.modelId), ...vibeModelIds])], assets: base.assets || [],
+    unlockPricePoints: draft.price, learningObjectives: steps.length ? [steps.at(-1).deliverable] : [], modelPolicy: models, vibeModelIds, vibeModelLabels,
+    modelLabels: [...new Set([...suppliedModelLabels,...models.map(item => displayModelLabel(item.modelId)), ...Object.values(vibeModelLabels)])], assets: base.assets || [],
     steps, previewSteps: steps.map(s => s.title), permittedDeliveryModes: modes };
   const materialGroups = modes.includes('CANVAS') ? draft.materialGroups ?? base.materialGroups ?? [] : [];
   const snapshot = modes.includes('CANVAS') ? draft.canvasSnapshot ?? base.canvasSnapshot ?? {nodes:[],edges:[]} : {nodes:[],edges:[]};
@@ -53,12 +72,28 @@ function buildCourseVersion(draft, base = {}) {
       unique(material.id);text(material.title,'素材名称');
       if (!['IMAGE','VIDEO','AUDIO','PROMPT','GENERATION_BOX'].includes(material.materialType)) throw Error('不支持的素材类型');
       if (material.materialType === 'GENERATION_BOX' && !['TEXT','IMAGE','VIDEO','AUDIO','MUSIC'].includes(material.snapshot?.box?.modality)) throw Error('请指定框体类型');
+      const box = material.materialType === 'GENERATION_BOX' && material.snapshot.box;
+      if (box?.modelBinding === 'BOX' && box.model) {
+        text(box.model,'框体模型',120);
+        course.modelLabels.push(box.modelLabel || box.model);
+      }
       if (material.materialType === 'PROMPT') text(material.snapshot?.content || material.description,'画布提示词',12000);
     }
   }
   const prompts = modes.includes('VIBECODING') ? (draft.classroomConfig ?? base.classroomConfig)?.vibeCoding?.presetPrompts ?? [] : [];
   if (!Array.isArray(prompts) || prompts.length > 100) throw Error('请检查提示词预设');
-  course.classroomConfig={vibeCoding:{presetPrompts:prompts.map(prompt=>({title:text(prompt.title,'预设名称'),text:text(prompt.text,'预设正文',12000)}))}};
+  const rawUsageLimit = modes.includes('VIBECODING')
+    ? (draft.classroomConfig ?? base.classroomConfig)?.vibeCoding?.usageLimit ?? 0
+    : 0;
+  const usageLimit = rawUsageLimit === '' ? 0 : Number(rawUsageLimit);
+  if (!Number.isSafeInteger(usageLimit) || usageLimit < 0 || usageLimit > 1000000) throw Error('VibeCoding 使用次数上限必须是 0-1000000 的整数');
+  course.classroomConfig={
+    vibeCoding:{
+      presetPrompts:prompts.map(prompt=>({title:text(prompt.title,'预设名称'),text:text(prompt.text,'预设正文',12000)})),
+      usageLimit,
+    },
+  };
+  course.modelLabels = [...new Set(course.modelLabels)];
   course.materialGroups=materialGroups;course.canvasSnapshot=snapshot;
   return course;
 }

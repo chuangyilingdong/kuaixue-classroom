@@ -1,0 +1,19 @@
+[Unit]
+Description=Kuaixue VibeCoding runtime gateway
+Requires=kuaixue-vibe.socket
+After=kuaixue-vibe.socket
+
+[Service]
+Type=simple
+User=kuaixue-vibe
+Group=kuaixue-vibe
+EnvironmentFile=/etc/kuaixue-vibe/gateway.env
+ExecStart=/usr/bin/node /opt/kuaixue-vibe/gateway.cjs
+Restart=on-failure
+UMask=0007
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/kuaixue-runtime-tickets
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

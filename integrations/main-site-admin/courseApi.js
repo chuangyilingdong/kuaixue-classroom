@@ -10,6 +10,7 @@ export function createKuaixueAdminApi(request) {
   }
   return {
     catalog: () => send(''),
+    models: () => send('/models'),
     publish: draft => send('/publish', draft),
     hide: (id, baseVersion) => send('/hide', {id, baseVersion}),
   };

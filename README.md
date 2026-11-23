@@ -7,6 +7,7 @@ Standalone desktop client for Kuaixue AI courses.
 - Independent Electron + React application and Git repository.
 - Local catalog API PoC and desktop UI share a single demo course seed. The client also supports a clearly labeled demo fallback when no API origin is configured.
 - The default package uses a local demo learner. A separate service mode implements course publishing, version purchases, progress, and scoped workspace access through platform adapters. Production identity, wallet and runtime integration require staging verification.
+- Service mode supports short-lived per-run model grants and full-project ZIP snapshots through loopback-only main-site internal APIs. Desktop restore keeps a backup of the replaced workspace.
 - Existing project plan documents are retained as planning references.
 
 ## Requirements
@@ -34,7 +35,15 @@ pnpm start
 pnpm package:win
 ```
 
+正式联网 Windows 包使用 `pnpm package:win:official`，读取仓库内仅含公开地址的 `.env.official`，输出至 `release/classroom-official/`。打包会校验独立的 VibeCoding HTTPS 源，并将其写入 `app.asar` 内的 `dist/desktop-service.json` 和实际工作区代码；默认离线包仍用原命令。
+
 The NSIS installer is written to `release/`. The current App ID (`com.kuaixue.classroom`) is a provisional, product-specific packaging identity for internal testing. Confirm the official reverse-domain identifier, signing certificate, icon, and update channel before any external distribution. The default package supports offline demo purchases. Enable service mode at build time for staging.
+
+## Production course service
+
+`formal-server.cjs` is the production entry point. Its required environment variables, loopback internal-origin rule, source file inventory, health checks and rollback expectations are documented in `docs/快学课堂_生产课程服务启动说明_20261123.md`.
+
+Do not compile `KUAIXUE_INTERNAL_SECRET`, `KUAIXUE_SESSION_SECRET`, `KUAIXUE_CANVAS_BILLING_SECRET`, `KUAIXUE_WALLET_SECRET` or RunningHub credentials into the desktop package. `KUAIXUE_MAIN_SITE_ORIGIN` is the public site; loopback-only `/internal/*` calls use `KUAIXUE_INTERNAL_ORIGIN`.
 
 ## Catalog integration
 
@@ -50,7 +59,7 @@ Run the focused adapter tests with `pnpm test`.
 2. Define course catalog, immutable course version, purchase, refund, and entitlement APIs in the Kuaixue service.
 3. Confirm the Canvas embedding approach and course-template handoff.
 4. Define VibeCoding course-run context and short-lived runtime credentials without classroom-session authorization.
-5. Define local workspace backup, cloud sync, and recovery scope.
+5. Verify the implemented ZIP snapshot upload, download, conflict, and cross-machine restore flow against production.
 6. Assign a unique app ID, product name, data directory, deep-link scheme, and update channel before packaging.
 
 Do not use production accounts, payment endpoints, or generation billing until these contracts are reviewed and configured.
