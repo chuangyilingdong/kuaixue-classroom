@@ -21,6 +21,7 @@ export const courseServiceFiles = [
   'integrations/main-site-admin/WorkspaceRecipe.jsx',
   'integrations/vibecoding/main-site-tickets.mjs',
   'integrations/vibecoding/runtime-broker.mjs',
+  'shared/course-asset-url.mjs',
   'shared/local-snapshot.mjs',
   'src/data/account.js',
   'src/data/courses.js',

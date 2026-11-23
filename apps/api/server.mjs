@@ -4,6 +4,7 @@ import { createAccountReader, WalletUnavailable } from "./account.mjs";
 import {mainSiteRuntimeFromEnv} from './main-site-runtime.mjs';
 import {canvasGenerationFromEnv} from './canvas-generation.mjs';
 import {snapshotLimits} from '../../shared/local-snapshot.mjs';
+import {verifyCourseAssetAccess} from '../../shared/course-asset-url.mjs';
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -127,7 +128,8 @@ function catalogPage(catalog, params) {
   };
 }
 
-export function createApiServer({ catalog = DEFAULT_CATALOG, accountReader, platform, identity, desktopAuth, allowedOrigins = ["http://127.0.0.1:5173", "http://localhost:5173"] } = {}) {
+export function createApiServer({ catalog = DEFAULT_CATALOG, accountReader, platform, identity, desktopAuth,
+  assetSigningSecret='', allowedOrigins = ["http://127.0.0.1:5173", "http://localhost:5173"] } = {}) {
   const allowed = new Set(allowedOrigins.filter(origin => origin !== "null" && origin !== "*"));
   return createServer(async (req, res) => {
     const origin = req.headers.origin;
@@ -204,9 +206,21 @@ export function createApiServer({ catalog = DEFAULT_CATALOG, accountReader, plat
     if (['GET','HEAD'].includes(req.method) && assetMatch) {
       try {
         if (!platform?.asset) return json(res,503,{error:{code:'ASSET_SERVICE_UNAVAILABLE'}});
-        const principal = await sessionPrincipal(req,identity);
-        if (!principal?.userId) return json(res,401,{error:{code:'SESSION_REQUIRED'}});
-        const asset = platform.asset(principal.userId,assetMatch[1]);
+        const expires=Number(url.searchParams.get('expires'));
+        const signature=url.searchParams.get('signature');
+        const signed=url.searchParams.has('expires')||url.searchParams.has('signature');
+        let asset;
+        if(signed){
+          if(!verifyCourseAssetAccess({assetId:assetMatch[1],expires,signature,secret:assetSigningSecret})){
+            return json(res,403,{error:{code:'ASSET_ACCESS_DENIED',message:'素材访问授权无效'}});
+          }
+          if(!platform.assetById)return json(res,503,{error:{code:'ASSET_SERVICE_UNAVAILABLE'}});
+          asset=platform.assetById(assetMatch[1]);
+        }else{
+          const principal = await sessionPrincipal(req,identity);
+          if (!principal?.userId) return json(res,401,{error:{code:'SESSION_REQUIRED'}});
+          asset = platform.asset(principal.userId,assetMatch[1]);
+        }
         const bytes = await readFile(asset.path);
         const range = parseByteRange(req.headers.range,bytes.length);
         if (range === false) {
@@ -354,10 +368,11 @@ export function createApiServer({ catalog = DEFAULT_CATALOG, accountReader, plat
   });
 }
 
-export function startApiServer({ port = Number(process.env.KUAIXUE_API_PORT || 4174), host = "127.0.0.1", accountReader, platform, identity, desktopAuth } = {}) {
+export function startApiServer({ port = Number(process.env.KUAIXUE_API_PORT || 4174), host = "127.0.0.1", accountReader, platform, identity, desktopAuth,
+  assetSigningSecret=process.env.KUAIXUE_ASSET_SIGNING_SECRET||process.env.KUAIXUE_INTERNAL_SECRET||process.env.KUAIXUE_CANVAS_BILLING_SECRET||'' } = {}) {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("KUAIXUE_API_PORT must be between 1 and 65535.");
   const server = createApiServer({
-    accountReader, platform, identity, desktopAuth,
+    accountReader, platform, identity, desktopAuth, assetSigningSecret,
     allowedOrigins: process.env.KUAIXUE_ALLOWED_ORIGINS?.split(",").map((item) => item.trim()).filter(Boolean),
   });
   server.listen(port, host, () => console.log(`Kuaixue catalog API listening on http://${host}:${port}`));

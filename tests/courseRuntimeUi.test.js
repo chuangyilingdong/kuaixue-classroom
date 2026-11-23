@@ -33,3 +33,19 @@ test('缺少云端快照时继续启动本机 Vibe 工作区',()=>{
   assert.match(run,/error\.status!==404/);
   assert.match(run,/if\(snapshot\)await window\.kuaixueDesktop\.vibe\.restoreLocal/);
 });
+
+test('VibeCoding 支持原生目录、文件选择和新工作区',()=>{
+  const entry=readFileSync(new URL('../integrations/vibecoding/course-entry.tsx',import.meta.url),'utf8');
+  const run=readFileSync(new URL('../src/ui/CourseRun.jsx',import.meta.url),'utf8');
+  const main=readFileSync(new URL('../electron/main.cjs',import.meta.url),'utf8');
+  const preload=readFileSync(new URL('../electron/preload.cjs',import.meta.url),'utf8');
+  assert.match(entry,/allowOpenWorkspace(?:\s|\/|>)/);
+  assert.doesNotMatch(entry,/allowOpenWorkspace=\{false\}/);
+  assert.match(entry,/selectDirectory:\s*async/);
+  assert.match(entry,/selectFiles:\s*\(\)\s*=>\s*chooseClassroomPaths/);
+  assert.match(entry,/focusCourseComposer/);
+  assert.match(run,/kuaixue-classroom-paths-request/);
+  assert.match(run,/function cleanCanvasWork/);
+  assert.match(main,/ipcMain\.handle\('vibe:selectPaths'/);
+  assert.match(preload,/'selectPaths'/);
+});

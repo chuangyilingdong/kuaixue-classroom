@@ -260,6 +260,12 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
     if (!assetRoot) reject(503,'课程素材存储待接入');
     return {...row,path:join(assetRoot,row.object_key)};
   }
+  function assetById(id) {
+    const row = db.prepare('SELECT * FROM kx_assets WHERE id=?').get(id);
+    if (!row) reject(404,'素材不存在');
+    if (!assetRoot) reject(503,'课程素材存储待接入');
+    return {...row,path:join(assetRoot,row.object_key)};
+  }
   async function quote(user,{id,nodeId,modality,input,preview=false}) {
     const course = generationContext(user,id);
     if (typeof nodeId !== 'string' || !nodeId || nodeId.length > 150 || !input || typeof input !== 'object' || Array.isArray(input)) reject(400,'生成参数无效');
@@ -296,6 +302,10 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
     try {
       result = await generateOrLookup(JSON.parse(row.input),JSON.parse(row.quote));
     } catch (error) {
+      if(error?.definitive===true){
+        db.prepare("UPDATE kx_generation SET status='failed' WHERE id=? AND status='submitted'").run(jobId);
+        reject(409,error.message||'生成失败，已释放费用');
+      }
       if (error instanceof CourseProblem || Number.isInteger(error?.status)) throw error;
       reject(502,error?.message || '模型生成失败');
     }
@@ -315,7 +325,7 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
   function revoke(orderId,transactionId) {
     return db.prepare("UPDATE kx_orders SET status='revoked' WHERE id=? AND receipt=? AND status='confirmed'").run(orderId,transactionId).changes;
   }
-  return {catalog,detail,publish,hide,listGrants,purchase,start,save,works,quote,generate,uploadAsset,asset,
+  return {catalog,detail,publish,hide,listGrants,purchase,start,save,works,quote,generate,uploadAsset,asset,assetById,
     localRuntime,uploadLocalSnapshot:uploadLocalSnapshotRecord,downloadLocalSnapshot:downloadLocalSnapshotRecord,
     revoke,hasRuntimeAccess,close:()=>db.close()};
 }

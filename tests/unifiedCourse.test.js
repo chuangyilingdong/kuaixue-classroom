@@ -143,6 +143,27 @@ test('quoted generation uses course model, recovers uncertain settlement on the 
   assert.deepEqual(await p.generate('learner',request),{text:'作品'});assert.equal(settled.size,1);
 });
 
+test('definitive upstream task creation failure releases the job for a fresh retry',async t=>{
+  const p=openCoursePlatform(':memory:',{
+    quoteGeneration:async job=>({quoteId:'quote',points:5,expiresAt:Date.now()+60000}),
+    generateOrLookup:async job=>{
+      if(job.jobId===firstJob)throw Object.assign(Error('RunningHub 未返回任务编号'),{definitive:true});
+      return {jobId:job.jobId,status:'settled',transactionId:'tx',asset:{text:'作品'}};
+    },
+  });
+  t.after(()=>p.close());
+  const course=p.publish('op',{...draft,price:0,modelPolicy:[{modality:'TEXT',modelId:'course-model'}]});
+  const target={courseId:course.id,versionId:course.versionId};
+  await p.purchase('learner',target);const run=await p.start('learner',{...target,mode:'CANVAS'});
+  const node={id:run.id,nodeId:'scene',modality:'TEXT',input:{prompt:'分镜'}};
+  const first=await p.quote('learner',node);
+  const firstJob=first.id;
+  await assert.rejects(p.generate('learner',{id:run.id,jobId:first.id}),/未返回任务编号/);
+  const retry=await p.quote('learner',node);
+  assert.notEqual(retry.id,first.id);
+  assert.deepEqual(await p.generate('learner',{id:run.id,jobId:retry.id}),{text:'作品'});
+});
+
 test('desktop session exchange sets a secure cookie and signs out through the identity provider',async t=>{
  const redirectUri='https://kt.example/kuaixue/desktop/callback',clientId='kuaixue',token='x'.repeat(40),revoked=[];
  const server=createApiServer({allowedOrigins:['kuaixue://classroom'],desktopAuth:{redirectUri,clientId,exchange:async()=>token,revokeSession:async session=>revoked.push(session)}});

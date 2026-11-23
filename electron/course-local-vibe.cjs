@@ -124,6 +124,10 @@ async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
           res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});
           return res.end(JSON.stringify(result));
         }
+        if(process.env.KUAIXUE_QA_WRAPPER==='1'&&req.method==='GET'&&url.pathname==='/kuaixue/workbench/qa-wrapper'){
+          res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
+          return res.end(`<!doctype html><meta charset="utf-8"><style>html,body,iframe{margin:0;width:100%;height:100%;border:0}</style><iframe sandbox="allow-scripts allow-same-origin"></iframe><script>const frame=document.querySelector('iframe');frame.src='/kuaixue/workbench/'+location.hash;addEventListener('message',event=>{if(event.source!==frame.contentWindow||event.data?.type!=='kuaixue-classroom-paths-request')return;const selected=new URLSearchParams(location.search).get('path');event.source.postMessage({type:'kuaixue-classroom-paths-result',requestId:event.data.requestId,paths:selected?[selected]:[]},event.origin)})</script>`);
+        }
         const preview=/^\/kuaixue\/runtime\/preview\/([a-zA-Z0-9_-]{43})(\/.*)?$/.exec(url.pathname);
         if(preview&&['GET','HEAD'].includes(req.method)){
           try {

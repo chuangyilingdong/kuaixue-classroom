@@ -15,9 +15,21 @@ function uploadPreviewAsset(file) {
   });
 }
 
+function cleanCanvasWork(work) {
+  if (!work || !Array.isArray(work.nodes)) return work;
+  const nodes = work.nodes.filter(node => {
+    const data = node?.data || {};
+    const unfinishedLocal = data.uploaded === true && !data.assetUrl && (data.uploading === true || Boolean(data.uploadError));
+    return !unfinishedLocal;
+  });
+  const ids = new Set(nodes.map(node => node.id));
+  const edges = Array.isArray(work.edges) ? work.edges.filter(edge => ids.has(edge.source) && ids.has(edge.target)) : work.edges;
+  return nodes.length === work.nodes.length ? work : {...work, nodes, edges};
+}
+
 export default function CourseRun({run,close,saveBeforeLeaving}) {
   const canvas = run.mode === 'CANVAS';
-  const [initial] = useState(() => run.work ?? run.course.canvasSnapshot ?? {nodes:[],edges:[]});
+  const [initial] = useState(() => cleanCanvasWork(run.work ?? run.course.canvasSnapshot ?? {nodes:[],edges:[]}));
   const work = useRef(initial), revision = useRef(run.revision), pending = useRef(false), quotes = useRef(new Map());
   const [notice,setNotice] = useState(''), [busy,setBusy] = useState(false);
   const [frameUrl,setFrameUrl] = useState(canvas ? null : run.lease ? run.frameUrl : null);
@@ -95,6 +107,34 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
     }
     window.addEventListener('message',workbenchError);
     return ()=>window.removeEventListener('message',workbenchError);
+  },[]);
+  useEffect(()=>{
+    function workbenchPaths(event){
+      const frame=frameRef.current;
+      const requestId=String(event.data?.requestId||'');
+      if(event.source!==frame?.contentWindow||event.data?.type!=='kuaixue-classroom-paths-request'||
+          !/^[a-zA-Z0-9-]{1,80}$/.test(requestId)||
+          new URL(frame.src).origin!==event.origin||
+          !['directory','file'].includes(event.data?.kind))return;
+      const selectPaths=window.kuaixueDesktop?.vibe?.selectPaths;
+      if(!selectPaths)return frame.contentWindow?.postMessage({
+        type:'kuaixue-classroom-paths-result',requestId,paths:[],error:'文件选择器尚未就绪',
+      },event.origin);
+      void selectPaths({
+        kind:event.data.kind,multiple:event.data.multiple===true,
+      }).then(result=>{
+        frame.contentWindow?.postMessage({
+          type:'kuaixue-classroom-paths-result',requestId,paths:result?.paths||[],
+        },event.origin);
+      }).catch(error=>{
+        frame.contentWindow?.postMessage({
+          type:'kuaixue-classroom-paths-result',requestId,paths:[],
+          error:error?.message||'无法打开文件选择器',
+        },event.origin);
+      });
+    }
+    window.addEventListener('message',workbenchPaths);
+    return ()=>window.removeEventListener('message',workbenchPaths);
   },[]);
   const save = useCallback(async () => {
     if (pending.current) return false;

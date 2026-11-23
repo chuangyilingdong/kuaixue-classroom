@@ -132,3 +132,39 @@ test('文本模型走 OpenAI 兼容聊天通道而不是 RunningHub 任务接口
   assert.ok(calls.includes('https://llm.runninghub.cn/v1/chat/completions'));
   assert.ok(!calls.some(href=>href.includes('/openapi/v2/')));
 });
+
+test('MiniMax-H3 把对象参考图发送到执行接口，并为课程素材生成短期公网签名',async()=>{
+  const calls=[];
+  const fetchImpl=async(url,options)=>{
+    const href=String(url);calls.push({href,body:JSON.parse(options.body||'{}')});
+    if(href.endsWith('/internal/canvas-billing/quote'))return Response.json({points:42,balance:1000});
+    if(href.endsWith('/internal/canvas-billing/reserve'))return Response.json({holdId:'hold-video',status:'reserved'});
+    if(href.endsWith('/openapi/v2/rh-minimax-h3-multi'))return Response.json({code:0,data:{taskId:'task-video',status:'QUEUED'}});
+    if(href.endsWith('/openapi/v2/query'))return Response.json({code:0,data:{taskId:'task-video',status:'SUCCESS',
+      results:[{videoUrl:'https://cdn.example/video.mp4'}]}});
+    if(href.endsWith('/internal/canvas-billing/settle'))return Response.json({status:'succeeded'});
+    throw Error(`unexpected request ${href}`);
+  };
+  const adapter=createCanvasGenerationAdapter({
+    origin:'https://course.example.test',billingSecret:'billing-secret',runningHubApiKey:'rh-key',
+    publicOrigin:'https://aicyld.com.cn',assetSigningSecret:'course-asset-test-secret',
+    fetchImpl,pollIntervalMs:0,
+  });
+  const job={jobId:'job-video-refs',userId:'user-1',runId:'run-1',
+    modelId:'aicyld-runninghub::rh-minimax-h3-multi',
+    modelLabel:'MiniMax-H3 多模态参考生视频',modality:'VIDEO',
+    input:{prompt:'猴子跳起来',params:{aspectRatio:'16:9',resolution:'768P',durationSeconds:5},
+      referenceAssets:[
+        {type:'IMAGE',url:'https://cdn.example/reference.png'},
+        {type:'IMAGE',url:'https://aicyld.com.cn/api/v1/course-assets/11111111-2222-3333-4444-555555555555'},
+      ]}};
+  const quote=await adapter.quoteGeneration(job);
+  assert.equal(quote.points,42);
+  await adapter.generateOrLookup(job);
+  const execute=calls.find(call=>call.href.endsWith('/openapi/v2/rh-minimax-h3-multi'));
+  assert.deepEqual(execute.body.imageUrls.slice(0,1),['https://cdn.example/reference.png']);
+  const signed=new URL(execute.body.imageUrls[1]);
+  assert.equal(signed.origin,'https://aicyld.com.cn');
+  assert.match(signed.searchParams.get('signature')||'',/^[a-zA-Z0-9_-]{43}$/);
+  assert.ok(Number(signed.searchParams.get('expires'))>Math.floor(Date.now()/1000));
+});

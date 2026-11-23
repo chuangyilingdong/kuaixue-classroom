@@ -202,6 +202,20 @@ ipcMain.handle('vibe:openLocalFolder',async(event,request)=>{
   if(error) throw Error(error);
   return true;
 });
+ipcMain.handle('vibe:selectPaths',async(event,request)=>{
+  trustedWindow(event,classroomWindows);
+  const kind=request?.kind;
+  if(!['directory','file'].includes(kind)) throw Error('文件选择类型无效');
+  const multiple=request?.multiple===true;
+  const properties=kind==='directory'
+    ? ['openDirectory','createDirectory']
+    : [...(multiple?['multiSelections']:[]),'openFile'];
+  const choice=await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender),{
+    title:kind==='directory'?'选择工作区文件夹':'选择文件',
+    properties,
+  });
+  return choice.canceled?{cancelled:true,paths:[]}:{cancelled:false,paths:choice.filePaths};
+});
 ipcMain.handle('media:download',async(event,request)=>{
   trustedWindow(event,classroomWindows);
   const win=BrowserWindow.fromWebContents(event.sender);

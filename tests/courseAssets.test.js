@@ -6,6 +6,7 @@ import {join} from 'node:path';
 import {createApiServer} from '../apps/api/server.mjs';
 import {openCoursePlatform} from '../apps/api/course-platform.mjs';
 import {createCourseClient} from '../src/services/courseClient.js';
+import {signCourseAssetAccess} from '../shared/course-asset-url.mjs';
 
 async function fixture(t) {
   const root=await mkdtemp(join(tmpdir(),'kuaixue-assets-'));
@@ -19,6 +20,7 @@ async function fixture(t) {
   const run=await platform.start('learner',{courseId:course.id,versionId:course.versionId,mode:'CANVAS'});
   const server=createApiServer({
     platform,identity:session=>session==='qa'?{userId:'learner'}:null,allowedOrigins:['kuaixue://classroom'],
+    assetSigningSecret:'course-asset-test-secret',
   });
   server.listen(0,'127.0.0.1');
   await new Promise(resolve=>server.once('listening',resolve));
@@ -58,6 +60,13 @@ test('画布素材经登录、权益和运行实例校验后持久化并可重�
   assert.deepEqual(Buffer.from(await ranged.arrayBuffer()),bytes.subarray(1,4));
   const anonymous=await fetch(origin+asset.assetUrl);
   assert.equal(anonymous.status,401);
+  const expires=Math.floor(Date.now()/1000)+600;
+  const signature=signCourseAssetAccess({assetId:asset.id,expires,secret:'course-asset-test-secret'});
+  const signed=await fetch(`${origin}${asset.assetUrl}?expires=${expires}&signature=${signature}`);
+  assert.equal(signed.status,200);
+  assert.deepEqual(Buffer.from(await signed.arrayBuffer()),bytes);
+  const tampered=await fetch(`${origin}${asset.assetUrl}?expires=${expires}&signature=${'A'.repeat(43)}`);
+  assert.equal(tampered.status,403);
   const work={nodes:[{id:'local-1',type:'image',position:{x:10,y:20},data:{
     title:asset.name,uploaded:true,uploading:false,fileAssetId:asset.id,assetUrl:asset.assetUrl,previewUrl:asset.previewUrl,
   }}],edges:[]};

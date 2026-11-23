@@ -19,6 +19,18 @@ async function loadCourseSource(id) {
   if (resolve(id) === resolve(root,'../ui/src/WorkspaceSidebarFooter.tsx')) {
     return readFile(new URL('../integrations/vibecoding/course-footer.tsx',import.meta.url),'utf8');
   }
+  // The course shell has no full settings surface, but its native directory picker is
+  // still available through the classroom bridge. Do not replace folder selection with
+  // a hidden conversation-workspace fallback.
+  if (resolve(id) === resolve(root,'../ui/src/root/useRootWorkspaceActions.ts')) {
+    const source = await readFile(id, 'utf8');
+    const next = source.replaceAll(
+      'if (!supportsSettings) {',
+      'if (!supportsSettings && !platform.canSelectFilePath) {',
+    );
+    if (next === source) throw Error('灵动打开工作区入口变化，请核对课程适配');
+    return next;
+  }
   // In the course edition entitlement is supplied by the course gateway. A model is
   // optional for editing, so the upstream provider setup dialog must not block the editor.
   if (resolve(id) === resolve(root,'../ui/src/Root.tsx')) {

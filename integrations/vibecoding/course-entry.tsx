@@ -11,6 +11,40 @@ import type { IPlatformService, RemoteTarget } from "@zcode/shared";
 type CourseWebPlatform = IPlatformService & {
   classroom: NonNullable<IPlatformService['classroom']> & {openCourseHtmlPreview: (url: string) => boolean};
 };
+
+let dialogRequestId = 0;
+const pendingClassroomDialogs = new Map<string, {
+  resolve: (paths: string[]) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}>();
+window.addEventListener('message', event => {
+  if (event.source !== window.parent || event.data?.type !== 'kuaixue-classroom-paths-result') return;
+  const request = pendingClassroomDialogs.get(String(event.data.requestId || ''));
+  if (!request) return;
+  pendingClassroomDialogs.delete(String(event.data.requestId));
+  clearTimeout(request.timer);
+  if (event.data.error) request.reject(Error(String(event.data.error)));
+  else request.resolve(Array.isArray(event.data.paths) ? event.data.paths.filter((item: unknown) => typeof item === 'string') : []);
+});
+
+function chooseClassroomPaths(kind: 'directory' | 'file', multiple = false): Promise<string[]> {
+  const requestId = `${Date.now().toString(36)}-${++dialogRequestId}`;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingClassroomDialogs.delete(requestId);
+      reject(Error('文件选择已超时，请重试'));
+    }, 5 * 60 * 1000);
+    pendingClassroomDialogs.set(requestId, {resolve, reject, timer});
+    window.parent.postMessage({
+      type: 'kuaixue-classroom-paths-request',
+      requestId,
+      kind,
+      multiple,
+    }, '*');
+  });
+}
+
 function createWebPlatform(presets, openCourseHtmlPreview): CourseWebPlatform {
   return {
     classroom: {openCourseHtmlPreview, getPresets:async () => presets,getSnapshot:async () => null,
@@ -18,12 +52,10 @@ function createWebPlatform(presets, openCourseHtmlPreview): CourseWebPlatform {
       completeClassroomEndedAutoSubmit:async () => {},prepareWorkPreview:async () => null,
       logout:async () => {throw Error('请使用快学账号菜单');},scanWorkspaceFiles:async () => {throw Error('使用快学课程工程');},
       submitWork:async () => {throw Error('使用快学作品保存');},listWorks:async () => ({items:[]})},
-    canSelectFilePath: false,
-    // Web 端无法打开系统目录选择框
-    selectDirectory: () => Promise.resolve(null),
-    // Web 端无法打开系统文件选择框
-    selectFile: () => Promise.resolve(null),
-    selectFiles: () => Promise.resolve([]),
+    canSelectFilePath: true,
+    selectDirectory: async () => (await chooseClassroomPaths('directory'))[0] ?? null,
+    selectFile: async () => (await chooseClassroomPaths('file'))[0] ?? null,
+    selectFiles: () => chooseClassroomPaths('file', true),
     getPathForFile: () => null,
     createTempTextAttachment: () =>
       Promise.reject(new Error("Temporary text attachments require a desktop host")),
@@ -147,6 +179,16 @@ history.replaceState(null, '', location.pathname);
 function reportToClassroom(message: string) {
   try { window.parent.postMessage({type:'kuaixue-workbench-error',message}, '*'); } catch {}
 }
+function focusCourseComposer(attempt = 0) {
+  const active = document.activeElement;
+  if (active && active !== document.body) return;
+  const editor = document.querySelector<HTMLElement>('[role="textbox"][contenteditable="true"]');
+  if (editor) {
+    editor.focus();
+    return;
+  }
+  if (attempt < 80) setTimeout(() => focusCourseComposer(attempt + 1), 100);
+}
 async function enterCourse() {
   const runId = launch.get('run');
   const ticket = launch.get('ticket');
@@ -177,9 +219,10 @@ async function enterCourse() {
   root.render(<AppErrorBoundary><ZCodeIntlProvider settingService={services.settingService} broadcastService={services.broadcastService}>
     {!modelsReady && <div role="status" style={{position:'fixed',top:0,right:12,zIndex:10,pointerEvents:'none'}}>课程工程可编辑 · AI 生成未开放</div>}
     <Root services={services} platform={createWebPlatform(runtime.presets ?? [], createCourseHtmlPreview(services.fileService, runtime.workspacePath, runtime.previewToken))} initialWorkspaceAbsPath={runtime.workspacePath}
-      initialWorkspaceIdentity={runtime.workspaceIdentity} restoreSession={false} allowOpenWorkspace={false}
+      initialWorkspaceIdentity={runtime.workspaceIdentity} restoreSession={false} allowOpenWorkspace
       supportsSettings={false} preferDirectoryBrowser={false} supportsEmbeddedBrowser={false} allowRemoteWorkspace={false} />
   </ZCodeIntlProvider></AppErrorBoundary>);
+  setTimeout(() => focusCourseComposer(), 0);
 }
 root.render(<p role="status">正在打开课程工作区…</p>);
 void enterCourse().catch(error => {

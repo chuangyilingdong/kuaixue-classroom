@@ -18,6 +18,7 @@ const AI_MEDIA_MODELS=new Set([
   'youchuan/text-to-image-v8.2-fast',
   'youchuan/text-to-image-v8.2-turbo',
 ]);
+import {signedCourseAssetUrl} from '../../shared/course-asset-url.mjs';
 
 export const canvasBillingAliases=Object.freeze({
   'rh-seedream-v5-pro-t2i':'seedream-v5-pro/text-to-image',
@@ -118,23 +119,32 @@ function modalityCategory(modality){
   return ({TEXT:'text',IMAGE:'image',VIDEO:'video',AUDIO:'audio',MUSIC:'audio'})[modality]||'image';
 }
 
-function generationBody(job){
+function generationBody(job,assetOptions={}){
   const input=job.input&&typeof job.input==='object'?job.input:{};
   const params=input.params&&typeof input.params==='object'?input.params:{};
   const body={...params};
+  const signingOptions=assetOptions.secret?{
+    publicOrigin:assetOptions.publicOrigin,secret:assetOptions.secret,
+    expires:Math.floor(Date.now()/1000)+Math.max(60,Math.min(7200,assetOptions.ttlSeconds||3600)),
+  }:null;
   if(typeof input.prompt==='string'&&input.prompt.trim())body.prompt=input.prompt.trim();
   if(typeof input.title==='string'&&input.title.trim())body.title=input.title.trim();
-  const references=Array.isArray(input.referenceAssets)?input.referenceAssets.filter(item=>typeof item==='string'&&/^https:\/\//.test(item)):[];
+  const referenceUrl=item=>typeof item==='string'?item:item&&typeof item==='object'?String(item.url||item.assetUrl||item.previewUrl||''):'';
+  const references=Array.isArray(input.referenceAssets)?input.referenceAssets.map(referenceUrl)
+    .filter(item=>/^https:\/\//.test(item))
+    .map(item=>signingOptions?signedCourseAssetUrl(item,signingOptions):item):[];
   if(references.length)body.imageUrls=references;
-  if(typeof input.sourceAssetUrl==='string'&&/^https:\/\//.test(input.sourceAssetUrl))body.sourceImage=input.sourceAssetUrl;
-  if(typeof input.lastFrameAssetUrl==='string'&&/^https:\/\//.test(input.lastFrameAssetUrl))body.lastFrameImage=input.lastFrameAssetUrl;
+  if(typeof input.sourceAssetUrl==='string'&&/^https:\/\//.test(input.sourceAssetUrl))
+    body.sourceImage=signingOptions?signedCourseAssetUrl(input.sourceAssetUrl,signingOptions):input.sourceAssetUrl;
+  if(typeof input.lastFrameAssetUrl==='string'&&/^https:\/\//.test(input.lastFrameAssetUrl))
+    body.lastFrameImage=signingOptions?signedCourseAssetUrl(input.lastFrameAssetUrl,signingOptions):input.lastFrameAssetUrl;
   if(String(job.modality||'').toUpperCase()==='VIDEO'&&body.aspectRatio==='auto')body.aspectRatio='adaptive';
   return body;
 }
 
-function billingFacts(job,route=canvasModelRoute(job)){
+function billingFacts(job,route=canvasModelRoute(job),assetOptions={}){
   const displayText=String(job.modelLabel||job.modelId||'').trim();
-  const body=generationBody(job);
+  const body=generationBody(job,assetOptions);
   const category=modalityCategory(job.modality);
   const facts={
     modelKey:route.billingKey,
@@ -160,7 +170,7 @@ function billingFacts(job,route=canvasModelRoute(job)){
 
 function unwrap(payload){
   if(payload&&typeof payload==='object'&&!Array.isArray(payload)&&'code' in payload&&Number(payload.code)!==0){
-    throw Error(String(payload.msg||payload.message||`RunningHub 错误 ${payload.code}`));
+    throw Object.assign(Error(String(payload.msg||payload.message||`RunningHub 错误 ${payload.code}`)),{definitive:true});
   }
   return payload?.data&&typeof payload.data==='object'?payload.data:payload;
 }
@@ -188,6 +198,9 @@ export function createCanvasGenerationAdapter({
   runningHubAiBaseUrl='https://www.runninghub.ai/openapi/v2',
   runningHubLlmBaseUrl='https://llm.runninghub.cn/v1',
   runningHubLlmAiBaseUrl='https://llm.runninghub.ai/v1',
+  publicOrigin=origin,
+  assetSigningSecret='',
+  assetUrlTtlSeconds=3600,
   fetchImpl=fetch,
   pollIntervalMs=2000,
   generationTimeoutMs=300000,
@@ -198,6 +211,7 @@ export function createCanvasGenerationAdapter({
   const aiBase=new URL(runningHubAiBaseUrl);
   const llmCnBase=new URL(runningHubLlmBaseUrl);
   const llmAiBase=new URL(runningHubLlmAiBaseUrl);
+  const assetOptions=assetSigningSecret?{publicOrigin,secret:assetSigningSecret,ttlSeconds:assetUrlTtlSeconds}:{};
 
   async function billing(path,body,timeout=30000){
     const response=await fetchImpl(new URL(`/internal/canvas-billing/${path}`,mainSite),{
@@ -246,7 +260,7 @@ export function createCanvasGenerationAdapter({
 
   async function quoteGeneration(job){
     const route=canvasModelRoute(job);
-    const facts=billingFacts(job,route);
+    const facts=billingFacts(job,route,assetOptions);
     const quote=await billing('quote',{userId:job.userId,facts});
     if(!quote||!Number.isSafeInteger(quote.points)||quote.points<0)throw Error('画布报价待确认');
     return {quoteId:job.jobId,points:quote.points,expiresAt:Date.now()+5*60*1000,modelKey:facts.modelKey,executionModelKey:route.execution,balance:quote.balance};
@@ -254,14 +268,14 @@ export function createCanvasGenerationAdapter({
 
   async function generateOrLookup(job){
     const route=canvasModelRoute(job);
-    const facts=billingFacts(job,route);
+    const facts=billingFacts(job,route,assetOptions);
     const reservation=await billing('reserve',{
       userId:job.userId,idempotencyKey:job.jobId,taskId:job.jobId,projectId:job.runId,facts,
     });
     const holdId=reservation?.holdId||'';
     try{
       const config=runningHubConfig(route);
-      const body={...generationBody(job),clientId:job.jobId};
+      const body={...generationBody(job,assetOptions),clientId:job.jobId};
       if(route.text) {
         const chat=await chatCompletion(route,job);
         if(holdId)await billing('settle',{holdId,outcome:'succeeded',reason:'文本生成完成'});
@@ -270,7 +284,7 @@ export function createCanvasGenerationAdapter({
       }
       let result=await runningHub(route.execution,body,config);
       const taskId=String(result?.taskId||'');
-      if(!taskId)throw Error('RunningHub 未返回任务编号');
+      if(!taskId)throw Object.assign(Error('RunningHub 未返回任务编号'),{definitive:true});
       let status=String(result?.status||'QUEUED').toUpperCase();
       const started=Date.now();
       while(!['SUCCESS','FAILED'].includes(status)){
@@ -306,5 +320,7 @@ export function canvasGenerationFromEnv(env=process.env){
     runningHubAiBaseUrl:env.KUAIXUE_RUNNINGHUB_AI_BASE_URL||undefined,
     runningHubLlmBaseUrl:env.KUAIXUE_RUNNINGHUB_LLM_BASE_URL||undefined,
     runningHubLlmAiBaseUrl:env.KUAIXUE_RUNNINGHUB_LLM_AI_BASE_URL||undefined,
+    publicOrigin:env.KUAIXUE_PUBLIC_MAIN_ORIGIN||origin,
+    assetSigningSecret:env.KUAIXUE_ASSET_SIGNING_SECRET||env.KUAIXUE_INTERNAL_SECRET||env.KUAIXUE_CANVAS_BILLING_SECRET||'',
   });
 }
