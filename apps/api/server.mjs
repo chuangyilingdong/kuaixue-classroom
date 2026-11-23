@@ -173,7 +173,7 @@ export function createApiServer({ catalog = DEFAULT_CATALOG, accountReader, plat
             redirectUri !== desktopAuth.redirectUri || clientId !== desktopAuth.clientId || !clientId) return json(res,400,{error:{code:'INVALID_CALLBACK'}});
         const session = await desktopAuth.exchange({code,verifier,redirectUri,clientId});
         if (typeof session !== 'string' || !/^[a-zA-Z0-9_-]{32,256}$/.test(session)) return json(res,401,{error:{code:'LOGIN_FAILED'}});
-        res.setHeader('Set-Cookie',`kuaixue_session=${session}; Path=/; HttpOnly; Secure; SameSite=None`);
+        res.setHeader('Set-Cookie',`kuaixue_session=${session}; Path=/; Max-Age=28800; HttpOnly; Secure; SameSite=None`);
         return json(res,200,{data:{authenticated:true}});
       } catch { return json(res,401,{error:{code:'LOGIN_FAILED'}}); }
     }

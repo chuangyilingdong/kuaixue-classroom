@@ -5,14 +5,18 @@
 ## 视频路由
 
 生产课程服务已从未显式执行键的 `00:27` 版本切换到用户提供的
-`kuaixue-service-runninghub-key-contract-20261124-0029` 候选包。
+`kuaixue-service-runninghub-key-contract-20261124-0029` 候选包，
+并在其上增加桌面会话 Cookie 持久化修复。
 
 ```text
-候选包 SHA-256:
+0029 候选包 SHA-256:
 ea3c6b6935991650f8366a9680ec34e42604f1ad5f21fae5efc9454a38d16cee
 
+当前 0053 服务包 SHA-256:
+3ddef2af1a381f4aff12465ff37c8555e498fd5387b7a260e5e93784c9c1c2b6
+
 生产 release:
-/srv/aicyld/releases/kuaixue-service-runninghub-key-contract-20261124-0029/release
+/srv/aicyld/releases/kuaixue-service-session-cookie-fix-20261124-0053/release
 ```
 
 生产代码已包含：
@@ -27,7 +31,7 @@ canvasBillingAliases['rh-minimax-h3-multi'] = 'minimax/hailuo-h3/multimodal-to-v
 旧 release 保留在：
 
 ```text
-/srv/aicyld/releases/kuaixue-service-runninghub-key-contract-20261124-0029/release.before-current
+/srv/aicyld/releases/kuaixue-service-session-cookie-fix-20261124-0053/release.before-current
 ```
 
 ## RunningHub egress
@@ -83,6 +87,13 @@ Nginx 日志显示客户端在 `00:32` 至 `00:34` 多次加载
 第二套实例进入未登录状态后再次打开 `/kuaixue/sign-in/`，表现类似
 “进入工作区后又弹出另一个登录窗口”。本版新增单实例锁：第二次启动只恢复、
 显示并聚焦已有窗口。
+
+桌面换票成功后，`kuaixue_session` 原先是无 `Max-Age` 的浏览器会话 Cookie，
+关闭客户端后即丢失。现将其持久期与主站最长会话对齐为 8 小时：
+
+```text
+Max-Age=28800
+```
 
 复测结果：
 

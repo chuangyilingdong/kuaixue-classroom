@@ -150,7 +150,7 @@ test('desktop session exchange sets a secure cookie and signs out through the id
  const post=(route,body)=>fetch(`http://127.0.0.1:${server.address().port}/api/v1/desktop/`+route,{method:'POST',headers:{Origin:'kuaixue://classroom','Content-Type':'application/json',Cookie:'kuaixue_session='+token},body:JSON.stringify(body)});
  const payload={code:'code',verifier:'v'.repeat(48),clientId,redirectUri};
  assert.equal((await post('session',{...payload,redirectUri:'https://other.example'})).status,400);
- const started=await post('session',payload);assert.match(started.headers.get('set-cookie'),/HttpOnly; Secure/);assert.deepEqual((await started.json()).data,{authenticated:true});
+ const started=await post('session',payload);assert.match(started.headers.get('set-cookie'),/Max-Age=28800; HttpOnly; Secure/);assert.deepEqual((await started.json()).data,{authenticated:true});
  const closed=await post('logout',{});assert.match(closed.headers.get('set-cookie'),/Max-Age=0/);assert.deepEqual(revoked,[token]);
 });
 
