@@ -218,6 +218,179 @@ tests/canvasGeneration.test.js
 | `rh-mureka-v9-bgm` | `mureka-ai/mureka-v9/generate-bgm` |
 | `rh-mureka-v9-song` | `mureka-ai/mureka-v9/generate-song` |
 
+## 其他模型族请求体规则
+
+执行键正确只解决请求路径问题。不同模型族的 HTTP 请求体不能直接共用课程内部参数。
+
+### 图片模型
+
+| 模型族 | 主要执行字段 | 规则 |
+| --- | --- | --- |
+| 通用图片 | `prompt`、`aspectRatio`、`resolution`、`outputFormat`、`n` | `aspectRatio` 默认 `1:1` |
+| `youchuan/text-to-image-*` | `prompt`、`aspectRatio`、`quality`、`hd`、`imageUrl`、`sref` | 第 1 张参考图放 `imageUrl`，第 2 张放 `sref`；不支持 `n` |
+| `minimax/h3-image/*` | `prompt`、`size`、`n` | `size` 只接受明确 `宽x高` 或 `auto` |
+| `minimax/h3-image/image-edit` | `imageUrls: [{imageUrl}]` | 参考图必须转换成对象数组 |
+| `seedream-v5.5/layer-decomposition` | `resolution`、`imageUrl` | `resolution` 使用 `auto/1k/1.5k/2k` |
+| Seedream 文生图/图生图 | `width`、`height` 或 `resolution` | 明确像素尺寸时发送数值 `width/height`；否则发送规范化 `1k/2k` |
+| `rhart-image-g-2.6-*` | `size`、`quality`、`outputFormat`、`imageUrls`、`n` | `size` 使用明确像素尺寸或 `auto` |
+| `rhart-image-g-2.5-*` | `aspectRatio`、`resolution`、`quality`、`outputFormat`、`imageUrls`、`n` | 画幅和分辨率需按允许集合归一化 |
+| `rhart-image-n-nb*` | `aspectRatio`、`resolution`、`imageUrls`、`n` | 默认画幅 `1:1`，分辨率归一化为 `1k/2k/4k` |
+
+图片的 `resolution` 与 `aspectRatio` 不能混淆。部分图片接口不接受旧视频 `resolution` 与
+像素尺寸同时存在。
+
+### 视频模型
+
+| 模型族 | 画幅字段 | 时长字段 | 音频/参考素材 |
+| --- | --- | --- | --- |
+| Seedance 2.5 / 2.0 | `ratio` | `duration` 字符串 | `generateAudio`；多模态使用 `imageUrls/videoUrls/audioUrls` |
+| MiniMax H3 | `ratio` | `duration` 字符串 | `generateAudio`；多模态使用 `imageUrls/videoUrls/audioUrls` |
+| Kling | `aspectRatio` | `duration` 字符串 | 不发送 `generateAudio`；`kling-v4` 图生视频使用 `firstImageUrl` |
+| Wan 3 | `aspectRatio` | `duration` 字符串 | 发送 `generateAudio`；参考视频使用 `videoUrls` |
+| Muse Video | `aspectRatio` | 固定 `duration: "10"` | 固定 `resolution: "720p"`、`nsfwCheck: false`，不发送 `generateAudio` |
+| 通用图生视频 | 按模型族处理 | `duration` 字符串 | 非 Kling 使用 `firstFrameUrl` |
+
+Seedance 2.5 的图生视频必须使用：
+
+```json
+{
+  "ratio": "adaptive"
+}
+```
+
+### 特殊视频接口
+
+#### 对口型视频
+
+`kling-lip-sync/lip-sync-video`：
+
+```json
+{
+  "audioUrl": "https://...",
+  "sessionId": "...",
+  "faceId": "...",
+  "soundStartTime": "0",
+  "soundEndTime": "1",
+  "soundInsertTime": "0"
+}
+```
+
+不发送 `prompt`、`duration`、`resolution`、`generateAudio`。
+
+#### 动作控制
+
+`kling-v3.0-pro/motion-control`：
+
+```json
+{
+  "imageUrl": "https://...",
+  "videoUrl": "https://...",
+  "characterOrientation": "video",
+  "keepOriginalSound": true
+}
+```
+
+不发送 `prompt`、`duration`、`resolution`、`generateAudio`。
+
+#### 图片加音频生视频
+
+`kling-v2-ai-avatar-standard/image-audio-to-video`：
+
+```json
+{
+  "imageUrl": "https://...",
+  "audioUrl": "https://..."
+}
+```
+
+不发送 `duration`，也不发送 `generateAudio`。
+
+#### 视频超分
+
+`rhart-video/video-upscaler`：
+
+```json
+{
+  "videoUrl": "https://...",
+  "targetResolution": "1080p"
+}
+```
+
+不发送 `prompt`、`duration`、`generateAudio`。
+
+### 音频与音乐模型
+
+#### Kling 配音
+
+`kling-lip-sync/tts`：
+
+```json
+{
+  "text": "...",
+  "voiceId": "genshin_klee2",
+  "voiceLanguage": "zh",
+  "voiceSpeed": 1
+}
+```
+
+#### Speech 2.8
+
+`rhart-audio/text-to-audio/speech-2.8-*`：
+
+```json
+{
+  "text": "...",
+  "voice_id": "Wise_Woman",
+  "enable_base64_output": false,
+  "english_normalization": false
+}
+```
+
+#### Mureka
+
+背景音乐：
+
+```json
+{
+  "prompt": "...",
+  "n": 2
+}
+```
+
+歌曲额外发送：
+
+```json
+{
+  "lyrics": "..."
+}
+```
+
+### 文本模型
+
+```json
+{
+  "model": "<executionKey>",
+  "messages": [
+    {"role": "user", "content": "<prompt>"}
+  ],
+  "stream": false
+}
+```
+
+文本请求固定走 `/v1/chat/completions`。
+
+### 通用失败信号
+
+| 失败 | 常见原因 |
+| --- | --- |
+| 未返回 `taskId` | 执行键错误、请求体 schema 错误、缺少模型必需素材 |
+| 模型不允许该参数 | 把另一模型族的字段原样复用 |
+| 图片/视频素材无效 | 使用了私有 OSS URL、未生成短期签名 URL、字段名错误 |
+| 报价成功但执行失败 | 计费 facts 正确，但执行 body 没有按模型族转换 |
+
+主站当前以 `runningHubPricePreview.ts` 中的 `previewBody` 作为请求构造参照。
+差异字段必须按模型族实现，不能只在 H3 上做一次特判。
+
 ## MiniMax-H3 请求示例
 
 执行：
