@@ -3,28 +3,10 @@ import {createHash} from 'node:crypto';
 import {copyFile,mkdir,readFile,stat,writeFile} from 'node:fs/promises';
 import {dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {courseServiceFiles} from './course-service-files.mjs';
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
-const files=[
-  'formal-server.cjs',
-  'formal-provider.cjs',
-  'course-models.mjs',
-  'consent.html',
-  'apps/api/account.mjs',
-  'apps/api/canvas-generation.mjs',
-  'apps/api/course-actions.mjs',
-  'apps/api/course-platform.mjs',
-  'apps/api/generation-binding.mjs',
-  'apps/api/main-site-runtime.mjs',
-  'apps/api/server.mjs',
-  'data/course-catalog.demo.json',
-  'electron/course-version.cjs',
-  'integrations/vibecoding/main-site-tickets.mjs',
-  'integrations/vibecoding/runtime-broker.mjs',
-  'shared/local-snapshot.mjs',
-  'src/data/account.js',
-  'src/data/courses.js',
-];
+const files=courseServiceFiles;
 
 function argument(name){
   const index=process.argv.indexOf(name);
