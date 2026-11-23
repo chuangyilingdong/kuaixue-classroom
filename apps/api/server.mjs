@@ -387,7 +387,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
         assetRoot: process.env.KUAIXUE_ASSET_ROOT,
       }, process.env.KUAIXUE_RUNTIME_TICKET_DB);
     }
-    accountReader = createAccountReader({ identity, listGrants: platform?.listGrants || provider.listGrants, mainSite: process.env.KUAIXUE_MAIN_SITE_ORIGIN });
+    accountReader = createAccountReader({
+      identity,
+      listGrants: platform?.listGrants || provider.listGrants,
+      mainSite: process.env.KUAIXUE_INTERNAL_ORIGIN || process.env.KUAIXUE_MAIN_SITE_ORIGIN,
+    });
   }
   startApiServer({ accountReader, platform, identity, desktopAuth });
 }

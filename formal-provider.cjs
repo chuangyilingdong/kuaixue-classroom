@@ -44,8 +44,7 @@ function openFormalProvider(filename, env = process.env) {
 
   const clientId = env.KUAIXUE_CLIENT_ID || 'kuaixue-desktop';
   const redirectUri = env.KUAIXUE_REDIRECT_URI || 'https://aicyld.com.cn/kuaixue/desktop/callback';
-  const mainSiteOrigin = (env.KUAIXUE_MAIN_SITE_ORIGIN || 'http://127.0.0.1:3001').replace(/\/$/, '');
-  const internalMainOrigin = (env.KUAIXUE_INTERNAL_ORIGIN || mainSiteOrigin).replace(/\/$/, '');
+  const serverMainOrigin = (env.KUAIXUE_INTERNAL_ORIGIN || env.KUAIXUE_MAIN_SITE_ORIGIN || 'http://127.0.0.1:3001').replace(/\/$/, '');
   const publicMainOrigin = (env.KUAIXUE_PUBLIC_MAIN_ORIGIN || 'https://aicyld.com.cn').replace(/\/$/, '');
   const sessionKey = secretKey(env.KUAIXUE_SESSION_SECRET);
   const walletSecret = text(env.KUAIXUE_WALLET_SECRET);
@@ -83,7 +82,7 @@ function openFormalProvider(filename, env = process.env) {
     }),
     complete: async ({ nonce, mainToken }) => {
       if (!validOpaque(nonce) || typeof mainToken !== 'string' || mainToken.length > 32_000) throw new Error('授权流程已失效');
-      const response = await fetch(`${mainSiteOrigin}/api/auth/me`, { headers: { Accept: 'application/json', Authorization: `Bearer ${mainToken}` }, redirect: 'error', signal: AbortSignal.timeout(7000) });
+      const response = await fetch(`${serverMainOrigin}/api/auth/me`, { headers: { Accept: 'application/json', Authorization: `Bearer ${mainToken}` }, redirect: 'error', signal: AbortSignal.timeout(7000) });
       if (!response.ok) throw new Error('主站登录态无效');
       const profile = await response.json();
       if (!profile?.id || typeof profile.id !== 'string') throw new Error('主站账号信息无效');
@@ -112,7 +111,7 @@ function openFormalProvider(filename, env = process.env) {
     revokeSession: session => db.prepare('DELETE FROM kx_sessions WHERE token=?').run(sha256(session)),
   };
 
-  async function mainRequest(path, options = {}, origin = mainSiteOrigin) {
+  async function mainRequest(path, options = {}, origin = serverMainOrigin) {
     const response = await fetch(`${origin}${path}`, {
       ...options,
       headers: { Accept: 'application/json', ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) },
@@ -126,7 +125,7 @@ function openFormalProvider(filename, env = process.env) {
     if (!walletSecret) throw new Error('钱包服务密钥未配置');
     const { response, body } = await mainRequest('/internal/kuaixue/wallet/debit', {
       method: 'POST', headers: { 'x-kuaixue-wallet-secret': walletSecret }, body: JSON.stringify(order),
-    }, internalMainOrigin);
+    }, serverMainOrigin);
     if (response.status === 402) return { status: 'insufficient' };
     if (response.status === 423) return { status: 'disabled' };
     if (!response.ok || !body?.data) throw new Error(body?.error?.message || '钱包服务暂不可用');
@@ -136,7 +135,7 @@ function openFormalProvider(filename, env = process.env) {
   async function lookupOrder(orderId, userId) {
     if (!walletSecret) throw new Error('钱包服务密钥未配置');
     const path = `/internal/kuaixue/wallet/orders/${encodeURIComponent(orderId)}?userId=${encodeURIComponent(userId)}`;
-    const { response, body } = await mainRequest(path, { headers: { 'x-kuaixue-wallet-secret': walletSecret } }, internalMainOrigin);
+    const { response, body } = await mainRequest(path, { headers: { 'x-kuaixue-wallet-secret': walletSecret } }, serverMainOrigin);
     if (response.status === 404) return null;
     if (!response.ok || !body?.data) throw new Error(body?.error?.message || '订单服务暂不可用');
     return body.data;

@@ -45,7 +45,11 @@ async function main() {
     assetRoot: process.env.KUAIXUE_ASSET_ROOT,
   };
   const platform = withCourseModels(openTicketedCoursePlatform(openCoursePlatform, dbPath, runtimeProvider, process.env.KUAIXUE_RUNTIME_TICKET_DB), provider.identity);
-  const accountReader = createAccountReader({ identity: provider.identity, listGrants: platform.listGrants, mainSite: process.env.KUAIXUE_MAIN_SITE_ORIGIN || 'http://127.0.0.1:3001' });
+  const accountReader = createAccountReader({
+    identity: provider.identity,
+    listGrants: platform.listGrants,
+    mainSite: process.env.KUAIXUE_INTERNAL_ORIGIN || process.env.KUAIXUE_MAIN_SITE_ORIGIN || 'http://127.0.0.1:3001',
+  });
   const catalog = createApiServer({ platform, accountReader, identity: provider.identity, desktopAuth: provider.desktopAuth, allowedOrigins });
 
   function principal(req) {
