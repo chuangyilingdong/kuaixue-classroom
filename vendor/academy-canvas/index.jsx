@@ -1,0 +1,1810 @@
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  addEdge,
+  Background,
+  BaseEdge,
+  ConnectionMode,
+  EdgeLabelRenderer,
+  Controls,
+  Handle,
+  MarkerType,
+  MiniMap,
+  getBezierPath,
+  Position,
+  ReactFlow,
+  ReactFlowProvider,
+  useEdgesState,
+  useNodesState,
+  useReactFlow,
+  useStore,
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+import './styles.css';
+// 画幅档位的小示意图尺寸（纯函数单独放，守卫才跑得到；.jsx 在 node 里导不进来）
+import { ratioThumbSize } from './ratioThumb.js';
+// 框体「能不能删」的判据 + 未生成时的引导插画地址（纯函数单独放 .js，守卫 p122 才跑得到）
+import { BOX_EMPTY_ART, isProtectedBoxNode } from './boxRules.js';
+import { AudioPlayer } from './AudioPlayer.jsx';
+
+const CanvasActionsContext = createContext(null);
+// 受鉴权保护的素材地址（/api/**）不能直接塞进 <img>/<video>/<audio> 的 src：那些请求带不了
+// Authorization 头，必然 401、图永远出不来。宿主通过 resolveAssetUrl 把它换成能显示的地址：
+//   · 文件资产（/api/**/file-assets/**）：宿主先批量签名，直接返回 **OSS 直链**（2026-11-11）；
+//   · 其它受保护地址：退回「带 token 取回二进制 → blob:」，见 packages/shared/src/api.js 的 fetchBlobUrl。
+const AssetUrlContext = createContext(null);
+const EMPTY_VIEWPORT = { x: 0, y: 0, zoom: 1 };
+
+// 拖进来的文件在「上传中 / 上传失败」时的框体内容（四个媒体节点共用，只是外层类名不同）
+function UploadState({ className, data }) {
+  if (data.uploading === true) return <div className={`${className} is-uploading`}><span>⏳</span><small>上传中…</small></div>;
+  if (data.uploadError) return <div className={`${className} is-upload-error`}><span>⚠</span><small>上传失败：{data.uploadError}</small></div>;
+  return null;
+}
+
+const useAssetResolver = () => useContext(AssetUrlContext);
+
+// ── 提示词编辑器：富文本 + 内联「引用芯片」 ─────────────────────────────────────────────
+// 为什么不用 textarea：芯片必须**插在句子里**（参考那种「[图片 1] 是主角人物」），
+// 而 textarea 只能放纯文本，没法在文字中间放缩略图；分成「芯片一行 + 文字一行」又会出现
+// 一份重复的 `@图片 1`（用户 2026-09-11 报的就是这个）。
+//
+// 与 React 的边界：**这个 div 的子节点由我们自己的 DOM 操作维护，React 不渲染它的 children**
+// （JSX 里写成空标签）—— 否则每次重渲染都会把用户的光标位置冲掉。
+// 值仍然是纯文本：芯片序列化成 `@图片 N`，模型收到的提示词与以前完全一致。
+function PromptEditor({ value, refs = [], readOnly = false, placeholder = '', onChange, insertRef = null }) {
+  const boxRef = useRef(null);
+  const composingRef = useRef(false);
+  const resolveAsset = useAssetResolver();
+  const refsRef = useRef(refs);
+  refsRef.current = refs;
+
+  const labelOf = (element) => String(element?.getAttribute?.('data-label') || '');
+
+  // DOM → 纯文本：芯片还原成 `@图片 N`
+  const serialize = useCallback((root) => {
+    if (!root) return '';
+    let text = '';
+    const walk = (node) => {
+      if (node.nodeType === 3) { text += node.nodeValue; return; }
+      if (node.nodeType !== 1) return;
+      if (node.classList?.contains('learning-node__citation')) { text += `@${labelOf(node)}`; return; }
+      if (node.tagName === 'BR') { text += '\n'; return; }
+      node.childNodes.forEach(walk);
+    };
+    root.childNodes.forEach(walk);
+    return text;
+  }, []);
+
+  // 纯文本 → DOM：把 `@图片 N` 换成芯片；其它文本原样（按换行拆 <br>）
+  const build = useCallback((text) => {
+    const fragment = document.createDocumentFragment();
+    const pattern = /@(图片|视频|音频)\s?(\d+)/g;
+    let cursor = 0;
+    const pushText = (chunk) => {
+      const lines = String(chunk).split('\n');
+      lines.forEach((line, index) => {
+        if (index) fragment.appendChild(document.createElement('br'));
+        if (line) fragment.appendChild(document.createTextNode(line));
+      });
+    };
+    for (const match of String(text || '').matchAll(pattern)) {
+      pushText(text.slice(cursor, match.index));
+      fragment.appendChild(makeCitation(`${match[1]} ${match[2]}`));
+      cursor = match.index + match[0].length;
+    }
+    pushText(String(text || '').slice(cursor));
+    return fragment;
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function makeCitation(label) {
+    const known = refsRef.current.find((item) => item.label === label);
+    const chip = document.createElement('span');
+    chip.className = `learning-node__citation${known ? '' : ' is-stale'}`;
+    chip.setAttribute('contenteditable', 'false');
+    chip.setAttribute('data-label', label);
+    chip.title = known ? `${label}（引用中）` : `${label} 已失效：先把素材连到这个框体再引用`;
+    const thumb = document.createElement('i');
+    thumb.className = 'learning-node__citation-thumb';
+    const url = String(known?.url || '');
+    if (url) {
+      // 受鉴权保护的地址要先解析成能显示的（blob:），解析器带缓存
+      Promise.resolve(resolveAsset ? resolveAsset(url) : url)
+        .then((shown) => { if (shown) thumb.style.backgroundImage = `url("${shown}")`; })
+        .catch(() => {});
+    }
+    const name = document.createElement('b');
+    name.textContent = label;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'learning-node__citation-remove nodrag';
+    remove.setAttribute('contenteditable', 'false');
+    remove.title = '删除这个引用';
+    remove.textContent = '×';
+    remove.addEventListener('mousedown', (event) => {
+      event.preventDefault(); event.stopPropagation();
+      // 芯片后面跟着的那个空格一起带走，别在句子里留出双空格
+      const next = chip.nextSibling;
+      if (next?.nodeType === 3) next.nodeValue = String(next.nodeValue).replace(/^[\s\u00a0]/, '');
+      chip.remove();
+      sync();
+    });
+    chip.append(thumb, name, remove);
+    return chip;
+  }
+
+  const sync = () => {
+    if (composingRef.current) return;
+    const element = boxRef.current;
+    const next = serialize(element);
+    // 顺带报出「光标之前的纯文本」：@ 候选靠它判断（富文本里拿不到 selectionStart）
+    let before = '';
+    const selection = window.getSelection();
+    if (element && selection?.rangeCount && element.contains(selection.anchorNode)) {
+      const probe = selection.getRangeAt(0).cloneRange();
+      probe.setStart(element, 0);
+      before = probe.toString();
+    }
+    onChange?.(next, before);
+  };
+
+  // 外部值变了（换框体 / 撤销）：整体重画。正在输入时不碰 DOM，免得光标乱跳。
+  useLayoutEffect(() => {
+    const element = boxRef.current;
+    if (!element) return;
+    if (document.activeElement === element) return;
+    if (serialize(element) === String(value || '')) return;
+    element.replaceChildren(build(String(value || '')));
+  }, [value, build, serialize]);
+
+  // 在光标处插入一颗引用芯片（@ 候选点选时调用）：先把没写完的「@查询」删掉，再插芯片 + 空格
+  const insertCitation = (label) => {
+    const element = boxRef.current;
+    if (!element) return;
+    element.focus();
+    const selection = window.getSelection();
+    if (!selection || !selection.rangeCount || !element.contains(selection.anchorNode)) return;
+    const probe = selection.getRangeAt(0).cloneRange();
+    probe.setStart(element, 0);
+    const typedBefore = probe.toString();
+    const at = typedBefore.lastIndexOf('@');
+    const pending = at >= 0 && !/\s/.test(typedBefore.slice(at + 1)) && typedBefore.length - at <= 12;
+    if (pending && typeof selection.modify === 'function') {
+      for (let i = 0; i < typedBefore.length - at; i += 1) selection.modify('extend', 'backward', 'character');
+      selection.deleteFromDocument();
+    }
+    const range = selection.rangeCount ? selection.getRangeAt(0) : null;
+    if (!range) return;
+    const chip = makeCitation(label);
+    range.insertNode(chip);
+    const space = document.createTextNode('\u00a0');
+    chip.after(space);
+    const after = document.createRange();
+    after.setStartAfter(space); after.collapse(true);
+    selection.removeAllRanges(); selection.addRange(after);
+    sync();
+  };
+  useEffect(() => { if (insertRef) insertRef.current = insertCitation; return () => { if (insertRef) insertRef.current = null; }; });
+
+  // 连线的增删会改变引用是否有效。
+  // 用户 2026-09-17 口径：**取消连线就直接把引用去掉** —— 原来只是把芯片标成「已失效」，
+  // 还要学生自己再点一次 ×，白多一步（而且那句「(已失效)」留在句子里很难看）。
+  // 有效的芯片只清理样式，不重建 DOM（保住光标）。
+  useEffect(() => {
+    const element = boxRef.current;
+    if (!element) return;
+    let removed = false;
+    element.querySelectorAll('.learning-node__citation').forEach((chip) => {
+      if (refs.some((item) => item.label === chip.getAttribute('data-label'))) {
+        chip.classList.remove('is-stale');
+        return;
+      }
+      // 芯片后面那个不间断空格一起带走，别在句子里留双空格
+      const next = chip.nextSibling;
+      if (next?.nodeType === 3) next.nodeValue = String(next.nodeValue).replace(/^[\s\u00a0]/, '');
+      chip.remove();
+      removed = true;
+    });
+    // 芯片没了，**值也得跟着变**：不然父组件的提示词里还留着 `@图片 1`，
+    // 提交上去就是一句指向不存在素材的空引用。sync 只读 DOM 与 refs，不进依赖数组
+    // （它是每次渲染新建的函数，写进依赖会每渲染跑一次）。
+    if (removed) sync();
+  }, [refs]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return <div
+    ref={boxRef}
+    className={`learning-node__inputbox learning-node__prompt nodrag ${NO_WHEEL_ZOOM_CLASS}${readOnly ? ' is-readonly' : ''}`}
+    contentEditable={!readOnly}
+    suppressContentEditableWarning
+    role="textbox"
+    aria-multiline="true"
+    aria-label={placeholder || '提示词'}
+    data-placeholder={placeholder}
+    onInput={sync}
+    onCompositionStart={() => { composingRef.current = true; boxRef.current?.classList.add('is-composing'); }}
+    onCompositionEnd={() => { composingRef.current = false; boxRef.current?.classList.remove('is-composing'); sync(); }}
+    onBlur={sync}
+    onPaste={(event) => {
+      // 只收纯文本：粘贴带格式的内容会往编辑器里塞一堆 HTML
+      event.preventDefault();
+      const text = String(event.clipboardData?.getData('text/plain') || '').replace(/\s+$/g, ' ');
+      document.execCommand('insertText', false, text);
+    }}
+  />;
+}
+
+// 生成中：框体里明写「小灵施展魔法中 N%」（用户 2026-09-21 口径：四类框体都要有个数字进度条）。
+//
+// ⚠️ 这个百分比**不是上游的真实进度**：上游（seedance/Mureka/H3 那条中继）只回状态、不回百分比，
+//    我们也没存过原始响应（只有 request/payload id）。所以它是按**实测中位耗时**估的，
+//    并且封顶 **95%** —— 最后那 5% 留给"真的完成"，绝不出现"进度满了还在等"的假完成。
+//    期望值来自生产 generation_jobs 的实测（2026-09-21）：图片中位 45s / 最长 82s、文本 2s、视频 132s。
+//    （音乐生产上还没有样本，取 90s 的量级。）
+const GENERATION_EXPECTED_SECONDS = { TEXT: 6, IMAGE: 50, VIDEO: 130, MUSIC: 90 };
+function GeneratingState({ className, modality, startedAt }) {
+  const expected = GENERATION_EXPECTED_SECONDS[String(modality || '').toUpperCase()] || 45;
+  // ⚠️ 2026-09-26 全站审计：原来这里直接在**渲染期**求值 `Number(startedAt) || Date.now()` ——
+  //    从在途任务恢复的框体没有 generationStartedAt（只有 generationStatus），于是每次渲染都拿到
+  //    新的 Date.now()：effect 依赖每渲染变化 → 定时器被反复重建，而且 Date.now() - start 恒为 0，
+  //    进度条永远停在 1%。用 ref 把兜底起点**固定下来**。
+  const startRef = useRef(null);
+  if (startRef.current === null) startRef.current = Number(startedAt) || Date.now();
+  const start = startRef.current;
+  const [percent, setPercent] = useState(1);
+  useEffect(() => {
+    const tick = () => setPercent(Math.max(1, Math.min(95, Math.round(((Date.now() - start) / 1000 / expected) * 100))));
+    tick();
+    const timer = setInterval(tick, 700);
+    return () => clearInterval(timer);
+  }, [start, expected]);
+  return <div className={`${className} is-generating`}>
+    <span>✨</span>
+    <small>小灵施展魔法中{percent}%</small>
+    <i className="learning-node__progress" style={{ width: `${percent}%` }} aria-hidden="true" />
+  </div>;
+}
+
+function mediaKindOf(mimeType) {
+  const mime = String(mimeType || '');
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+  if (mime.startsWith('audio/')) return 'audio';
+  return '';
+}
+
+// 把素材地址解析成「能直接显示」的地址。非 /api/ 地址（生成结果的外链等）原样返回。
+function useDisplayUrl(raw) {
+  const resolve = useContext(AssetUrlContext);
+  const url = String(raw || '');
+  const needsResolve = Boolean(resolve) && url.startsWith('/api/');
+  // 需要解析的地址**先别渲染**：浏览器会拿原始 /api/... 去请求、带不了 token，白挨一个 401。
+  const [shown, setShown] = useState(() => (needsResolve ? '' : url));
+  useEffect(() => {
+    if (!needsResolve) { setShown(url); return undefined; }
+    let active = true;
+    // ⭐ 解析不出东西时**退回原始 /api/ 地址**，让 <img>/<video> 自己去取。
+    //    为什么必须留这条兜底（2026-09-24 生产实测，学生的生成图一直不显示就是这个）：
+    //    素材在 OSS 上时，/api/.../download 会 302 到**跨域**的签名地址，而那个 bucket
+    //    没有配 CORS → `fetch` 读不到响应体 → 拿不到 blob → 框体一直空着（全链路不报错，
+    //    只有浏览器控制台里有一条 CORS 提示）。视频/图片/音频这些**子资源**加载不吃 CORS，
+    //    所以直接交给标签反而能显示。
+    //    认证靠登录时种下的 `platform_token` cookie（HttpOnly/SameSite=Lax，同源子资源请求会带上；
+    //    服务端 readToken 认它）—— 这也是"带不了 token"那句话的例外。
+    //    解析成功（能拿到 blob:）时照旧用 blob，两条路都通。
+    Promise.resolve(resolve(url))
+      .then((next) => { if (active) setShown(next || url); })
+      .catch(() => { if (active) setShown(url); });
+    return () => { active = false; };
+  }, [url, needsResolve, resolve]);
+  return shown;
+}
+
+function id(prefix) {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function safeSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return { nodes: [], edges: [], viewport: EMPTY_VIEWPORT };
+  return {
+    // 框体尺寸既不落库也不恢复：卡片多大由内容（素材画幅）决定，学生不能手动缩放卡片
+    // （见第四节画布约定第 16 条）。历史快照里存过的 width/height 在这里一并丢掉。
+    nodes: (Array.isArray(snapshot.nodes) ? snapshot.nodes : []).map(dropNodeSize),
+    edges: Array.isArray(snapshot.edges) ? snapshot.edges : [],
+    viewport: { ...EMPTY_VIEWPORT, ...(snapshot.viewport || {}) },
+  };
+}
+
+function dropNodeSize(node) {
+  if (!node || (!node.width && !node.height && !node.style)) return node;
+  const next = { ...node };
+  delete next.width;
+  delete next.height;
+  if (next.style) {
+    const style = { ...next.style };
+    delete style.width;
+    delete style.height;
+    next.style = Object.keys(style).length ? style : undefined;
+  }
+  return next;
+}
+
+// 素材画幅（9:16 / 16:9 / 1:1 …）→ CSS 变量，决定卡片里素材区的大小与比例：
+// 9:16 的槽位就该是一张竖卡（参考的节点也是各自按素材比例），要看大用画布缩放。
+/**
+ * 框体**实际显示**的比例：学生挑的画幅要立刻反映到框体形状上。
+ *
+ * 用户 2026-09-22 报的图2：「选择不同的尺寸，框体应该也要跟着变」。根因是两边读的不是一个字段 ——
+ * 画幅选取器写的是 `studentParams.aspectRatio`（学生自选），而框体尺寸读的是 `data.aspectRatio`
+ * （课包定死的那个，学生改不了它）→ 学生点了 9:16，框体还是原来那个形状，看着像没生效。
+ * 优先学生选的；没选（'' = 自动）就用课包定的（也是 '' 时交给 CSS 的默认比例）。
+ */
+function boxDisplayRatio(data) {
+  const picked = String(data?.studentParams?.aspectRatio || '').trim();
+  return picked || String(data?.aspectRatio || '');
+}
+
+function aspectRatioVars(value) {
+  const matched = String(value || '').match(/^\s*(\d+(?:\.\d+)?)\s*[:x/]\s*(\d+(?:\.\d+)?)\s*$/i);
+  if (!matched) return undefined;
+  const width = Number(matched[1]);
+  const height = Number(matched[2]);
+  if (!(width > 0) || !(height > 0)) return undefined;
+  return { '--cv-ratio-w': String(width), '--cv-ratio-h': String(height) };
+}
+
+export const CANVAS_TEMPLATE_OPTIONS = [
+  { id: 'adventure', label: '角色冒险', description: '角色在奇幻场景中完成一个小任务。' },
+  { id: 'science', label: '科学小实验', description: '用角色、场景和步骤讲清一个科学发现。' },
+];
+
+export function createCanvasTemplate(templateId = 'adventure') {
+  const characterId = id('character');
+  const sceneId = id('scene');
+  const promptId = id('prompt');
+  const imageId = id('image');
+  const videoId = id('video');
+  const edge = (source, target) => ({ id: id('edge'), source, target, markerEnd: { type: MarkerType.ArrowClosed }, animated: true });
+
+  if (templateId === 'science') {
+    return {
+      nodes: [
+        { id: characterId, type: 'character', position: { x: 80, y: 80 }, data: { title: '小小科学家', emoji: '🧑‍🔬', name: '泡泡博士', trait: '爱观察，也爱提问题' } },
+        { id: sceneId, type: 'scene', position: { x: 80, y: 340 }, data: { title: '实验场景', emoji: '🔬', place: '明亮的小实验室', mood: '好奇又专注' } },
+        { id: promptId, type: 'prompt', position: { x: 430, y: 150 }, data: { title: '实验问题', text: '为什么有些东西会浮在水面上，有些会沉下去？' } },
+        { id: imageId, type: 'image', position: { x: 780, y: 70 }, data: { title: '观察画面', emoji: '🫧', caption: '水杯里的漂浮小实验' } },
+        { id: videoId, type: 'video', position: { x: 780, y: 340 }, data: { title: '实验讲解', text: '泡泡博士把不同材料放进水里，记录它们的变化。' } },
+      ],
+      edges: [edge(characterId, promptId), edge(sceneId, promptId), edge(promptId, imageId), edge(promptId, videoId)],
+      viewport: { x: 10, y: 25, zoom: 0.7 },
+    };
+  }
+
+  return {
+    nodes: [
+      { id: characterId, type: 'character', position: { x: 80, y: 80 }, data: { title: '故事角色', emoji: '🦊', name: '露娜小狐狸', trait: '勇敢、善良，喜欢帮助朋友' } },
+      { id: sceneId, type: 'scene', position: { x: 80, y: 340 }, data: { title: '故事场景', emoji: '🌲', place: '会发光的星光森林', mood: '神秘又温暖' } },
+      { id: promptId, type: 'prompt', position: { x: 430, y: 150 }, data: { title: '魔法提示词', text: '露娜小狐狸在星光森林里寻找一颗能帮助朋友的发光种子。' } },
+      { id: imageId, type: 'image', position: { x: 780, y: 70 }, data: { title: '画面灵感', emoji: '🌟', caption: '被星光照亮的森林小路' } },
+      { id: videoId, type: 'video', position: { x: 780, y: 340 }, data: { title: '故事短片', text: '露娜找到种子，并把光带回森林里的朋友身边。' } },
+    ],
+    edges: [edge(characterId, promptId), edge(sceneId, promptId), edge(promptId, imageId), edge(promptId, videoId)],
+    viewport: { x: 10, y: 25, zoom: 0.7 },
+  };
+}
+
+export function autoLayoutSnapshot(snapshot) {
+  const current = safeSnapshot(snapshot);
+  const nodeMap = new Map(current.nodes.map((node) => [node.id, node]));
+  const incoming = new Map(current.nodes.map((node) => [node.id, 0]));
+  const outgoing = new Map(current.nodes.map((node) => [node.id, []]));
+  current.edges.forEach((edge) => {
+    if (!nodeMap.has(edge.source) || !nodeMap.has(edge.target)) return;
+    outgoing.get(edge.source).push(edge.target);
+    incoming.set(edge.target, (incoming.get(edge.target) || 0) + 1);
+  });
+  const depth = new Map();
+  const queue = current.nodes.filter((node) => incoming.get(node.id) === 0).map((node) => node.id);
+  queue.forEach((nodeId) => depth.set(nodeId, 0));
+  while (queue.length) {
+    const source = queue.shift();
+    const sourceDepth = depth.get(source) || 0;
+    outgoing.get(source).forEach((target) => {
+      depth.set(target, Math.max(depth.get(target) || 0, sourceDepth + 1));
+      incoming.set(target, (incoming.get(target) || 1) - 1);
+      if (incoming.get(target) === 0) queue.push(target);
+    });
+  }
+  current.nodes.forEach((node, index) => { if (!depth.has(node.id)) depth.set(node.id, index % 3); });
+  const rowsByDepth = new Map();
+  const positions = new Map();
+  current.nodes.forEach((node) => {
+    const column = depth.get(node.id) || 0;
+    const row = rowsByDepth.get(column) || 0;
+    rowsByDepth.set(column, row + 1);
+    positions.set(node.id, { x: 90 + column * 320, y: 110 + row * 245 });
+  });
+  return { nodes: current.nodes.map((node) => ({ ...node, position: positions.get(node.id) })), edges: current.edges, viewport: { x: 0, y: 0, zoom: 0.72 } };
+}
+
+export function createStarterSnapshot() {
+  const promptId = id('prompt');
+  const imageId = id('image');
+  const videoId = id('video');
+  return {
+    nodes: [
+      { id: promptId, type: 'prompt', position: { x: 80, y: 190 }, data: { title: '魔法提示词', text: '一只勇敢的小狐狸在星光森林里寻找会发光的种子。' } },
+      { id: imageId, type: 'image', position: { x: 430, y: 90 }, data: { title: '画面灵感', emoji: '🦊', caption: '星光森林里的小狐狸' } },
+      { id: videoId, type: 'video', position: { x: 780, y: 230 }, data: { title: '故事短片', text: '小狐狸找到了会发光的种子' } },
+    ],
+    edges: [
+      { id: id('edge'), source: promptId, target: imageId, markerEnd: { type: MarkerType.ArrowClosed }, animated: true },
+      { id: id('edge'), source: imageId, target: videoId, markerEnd: { type: MarkerType.ArrowClosed }, animated: true },
+    ],
+    viewport: { x: 15, y: 65, zoom: 0.8 },
+  };
+}
+
+function useCanvasActions() {
+  const actions = useContext(CanvasActionsContext);
+  if (!actions) throw new Error('Canvas node must be rendered inside CanvasEditor');
+  return actions;
+}
+
+// 框体两侧的连接点（复刻参考节点两侧的小圆 ＋）：从这里拖出连线，松手落在另一个框体的圆点上就建立连接。
+// 注意两点：① React Flow 的 Handle 必须在 .learning-node 外面渲染——卡片有 overflow:hidden，
+// 放里面贴边的圆点会被裁掉半个；② 两侧都声明成 source，配合 ReactFlow 的 Loose 模式，
+// 任意一个圆点既能起线也能接收，学生从左边往右拉、从右边往左拉都行（不做自动连接，连哪由学生拖出来）。
+function NodePort({ side }) {
+  return <Handle
+    id={side}
+    type="source"
+    position={side === 'left' ? Position.Left : Position.Right}
+    className={`learning-node__port is-${side}`}
+    title="拖动这里连线到另一个框体"
+    aria-label={side === 'left' ? '从左侧拖出连线' : '从右侧拖出连线'}
+  >
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+  </Handle>;
+}
+
+// `headingExtra`：标题行最右侧的位置（`margin-left:auto`），给「复制」这类**卡片级**的小按钮用。
+// ⚠️ 2026-09-21 用户第二次报「复制按钮还是错位的，应该放在右上角」：上一版把它绝对定位在**结果块**的
+//    右上角，于是它压着结果块的边框与滚动条（长文本一滚，按钮还压住文字）。卡片右上角就是这一行。
+function NodeFrame({ icon, tone, title, children, selected, aspectRatio = '', variant = 'card', processing = false, onRename = null, renameDisabled = false, headingExtra = null }) {
+  const actions = useContext(CanvasActionsContext);
+  const readOnly = Boolean(actions?.readOnly);
+  // 标题默认是纯文本、双击才变输入框：单击就能编辑的话，学生想拖卡片往往点进输入框里，
+  // 拖不动还以为卡了（输入框是 nodrag 的）。改名的输入框也只占标题栏一小段，剩下的地方留给拖动。
+  const [renaming, setRenaming] = useState(false);
+  const canRename = Boolean(onRename) && !readOnly && !renameDisabled;
+  const closeRename = () => setRenaming(false);
+  // 卡片尺寸由「内容 + 素材画幅」决定，没有缩放手柄（拖动框体只挪位置，改大小用画布缩放）。
+  // 标题：默认纯文本、双击才进编辑；素材类框体（下方 variant="media"）把它当图片上方的说明文字用
+  const titleNode = canRename && renaming
+    ? <input
+      className="learning-node__title nodrag"
+      value={title || ''}
+      placeholder="给这个框体取个名字"
+      maxLength={40}
+      autoFocus
+      aria-label="框体名称"
+      onChange={(event) => onRename(event.target.value)}
+      onBlur={closeRename}
+      onDoubleClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => { if (event.key === 'Enter' || event.key === 'Escape') event.currentTarget.blur(); }}
+    />
+    : <strong
+      className="learning-node__title-text"
+      title={canRename ? '双击改名' : undefined}
+      onDoubleClick={(event) => { if (!canRename) return; event.stopPropagation(); setRenaming(true); }}
+    >{title || (canRename ? '未命名框体' : '')}</strong>;
+  const ports = <><NodePort side="left" /><NodePort side="right" /></>;
+  // 素材类框体（图片/视频/动画）用参考那种展示方式（用户反馈「图3 很难看，像图2那样设计」）：
+  // 标题缩成画面左上方的一行小字，画面本体就是卡片本身——不套深色卡片、不套深色内框。
+  if (variant === 'media') {
+    return <>
+      {ports}
+      <div className={`learning-node learning-node--${tone} learning-node--media${processing ? ' is-processing' : ''}`} style={aspectRatioVars(aspectRatio)}>
+        <div className="learning-node__caption"><span className="learning-node__caption-icon">{icon}</span>{titleNode}</div>
+        {children}
+      </div>
+    </>;
+  }
+  return <>
+    {ports}
+    <div className={`learning-node learning-node--${tone}${processing ? ' is-processing' : ''}`} style={aspectRatioVars(aspectRatio)}>
+      <div className="learning-node__heading">
+        <span>{icon}</span>
+        {titleNode}
+        {headingExtra}
+      </div>
+      {children}
+    </div>
+  </>;
+}
+
+// 节点底部面板的页脚：左侧状态胶囊 + 右侧生成按钮（复刻参考底部面板的页脚）
+function PanelFooter({ state, error, label = '生成', disabled = false, hint, onGenerate, extra = null }) {
+  const text = state === 'running' ? '生成中…' : state === 'failed' ? (error || '生成失败') : state === 'done' ? '已生成' : state === 'asset' ? '素材' : '未生成';
+  const tone = state === 'running' ? ' is-running' : state === 'failed' ? ' is-error' : (state === 'done' || state === 'asset') ? ' is-done' : '';
+  return <div className="learning-node__panel-footer nodrag">
+    <span className={`learning-node__status-chip${tone}`}>{text}</span>
+    {extra}
+    {onGenerate && state !== 'running' ? <button type="button" className="learning-node__submit" disabled={disabled} title={hint || label} onClick={onGenerate}>{label}<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg></button> : null}
+  </div>;
+}
+
+// 参考素材缩略图（复刻参考的展示）：小图 + 序号角标 + 名称胶囊；
+// 鼠标移上去在**面板内部**向上展开一张大图（用绝对定位，不改变布局、也不会被面板的裁切切掉）。
+// onRemove：悬停时右上角出现 × —— 连过来的参考删掉那条连线，框体自己的预置素材则清掉配置。
+function RefThumb({ url, label, index, onRemove = null }) {
+  const shown = useDisplayUrl(url);
+  return <figure className="learning-node__ref-thumb" tabIndex={0}>
+    {/* × 要放在「不裁剪」的外层：缩略图本体是 overflow:hidden（圆角裁图），
+        把 × 塞在里面会被裁掉一半（用户 2026-09-11 报的就是这个） */}
+    <span className="learning-node__ref-thumb-box">
+      <span className="learning-node__ref-thumb-pic">
+        {shown ? <img src={shown} alt={label} /> : <i>?</i>}
+        {index ? <b className="learning-node__ref-thumb-index">{index}</b> : null}
+      </span>
+      {onRemove ? <button
+        type="button"
+        className="learning-node__ref-thumb-remove nodrag"
+        title="删除这个参考"
+        aria-label={`删除参考 ${label}`}
+        onClick={(event) => { event.stopPropagation(); onRemove(); }}
+      >×</button> : null}
+    </span>
+    <figcaption className="learning-node__ref-thumb-label">{label}</figcaption>
+    {shown ? <span className="learning-node__ref-thumb-pop"><img src={shown} alt={`${label} 预览`} /></span> : null}
+  </figure>;
+}
+
+// @ 引用候选里的缩略图（同样要过 useDisplayUrl，见文件顶部的说明）
+function MentionThumb({ url, label }) {
+  const shown = useDisplayUrl(url);
+  return <span className="learning-node__mention-thumb">{shown ? <img src={shown} alt={label} /> : null}</span>;
+}
+
+// 已连接素材按类型编号（图片 1 / 视频 1 / 音频 1…），@ 引用和缩略图胶囊共用这套名字
+function referenceAssetLabels(assets) {
+  const counters = { IMAGE: 0, VIDEO: 0, AUDIO: 0 };
+  const names = { IMAGE: '图片', VIDEO: '视频', AUDIO: '音频' };
+  return (assets || []).map((asset) => {
+    const type = counters[asset.type] === undefined ? 'IMAGE' : asset.type;
+    counters[type] += 1;
+    return { ...asset, label: `${names[type]} ${counters[type]}` };
+  });
+}
+
+// 视频框体的「首帧 / 尾帧 / 参考素材」行：素材靠连线引进来（学生可从桌面拖文件进来再连线），未连时给明确提示
+// `lockedAudioRole`：课包锁的「音频怎么用」（LIP_SYNC 对口型 / VOICE_REFERENCE 声音参考），只影响这两处读面：
+// 行标上说明音频会怎么被用、以及"要念台词就把台词写进提示词"（上游不会替你转写音频）。
+/**
+ * 让「滚轮」在文本区里滚文本，而不是缩放画布 —— 用 xyflow 自己的约定：**给元素加 `nowheel` 类**。
+ *
+ * 用户 2026-09-22 报的图4：「右边的滚轮目前只能用鼠标手动拉，用滚轮就是画布缩放。」
+ * 根因：画布是 xyflow/react-flow，**滚轮默认被它拿去缩放**，节点里写了 `overflow-y:auto` 也收不到事件。
+ *
+ * ⚠️ **别用 React 的 `onWheel` + `stopPropagation` 去修**：xyflow 是在画布那层挂的**原生**监听器，
+ *    而 React 的合成事件挂在根容器上 —— 冒泡顺序是 `元素 → 画布(原生) → 根容器(React)`，
+ *    等 React 的处理器跑到时画布**早就缩放了**（第一版就是这么修的，实测没用，见 p129 的反向自检）。
+ *    xyflow 认的类名是 `nowheel`：`event.target.closest('.nowheel')` 命中就跳过缩放。
+ */
+export const NO_WHEEL_ZOOM_CLASS = 'nowheel';
+
+// 两行式音频播放器（画布的音乐框体与作品读面共用同一份，别各写一个）
+export { AudioPlayer } from './AudioPlayer.jsx';
+
+function FrameRefRows({ nodeId, incomingRefs = [], referenceUrl, omni, referenceAssets, supportsFirstFrame, supportsLastFrame, lockedMode = '', lockedLabel = '', lockedAudioRole = 'LIP_SYNC' }) {
+  const { updateNode, removeIncomingRef } = useCanvasActions();
+  // 悬停右上角的 ×：连过来的删连线，框体自己的预置素材清配置
+  const removePreset = () => updateNode(nodeId, { referenceUrl: '' });
+  // 课包锁成「文生视频」：这个框体**不该有线**，明说一句 —— 比留一行"首帧未连接"清楚得多
+  // （连线也会被 isValidConnection 挡住，这里只是让规则可见）。
+  if (lockedMode === 'TEXT') {
+    return <div className="learning-node__ref-row">
+      <span className="learning-node__seg-label">生成方式</span>
+      <span className="learning-node__ref-empty">{lockedLabel || '文生视频'}：不用连线，直接写提示词</span>
+    </div>;
+  }
+  if (omni) {
+    const named = referenceAssetLabels(referenceAssets);
+    // 连了音频时，把「课包锁的音频用法」写在行标上（用户 2026-09-21 口径：音频也由课包锁）——
+    // 学生连上音频后最该知道的一件事就是"它到底会不会驱动画面/要不要念台词"。
+    const audioCount = named.filter((asset) => asset.type === 'AUDIO').length;
+    const audioHint = !audioCount ? null : (lockedAudioRole === 'VOICE_REFERENCE'
+      ? '音频只作声音参考（不驱动画面）'
+      : '音频＝对口型（画面跟着它动、并保留这段音频）');
+    // 上限与上游一致（图片 9 / 视频 3 / 音频 3，服务端 `REFERENCE_LIMITS` 也是这套数）——
+    // 原来只显示前 6 个：学生连满 9 张也只看得到 6 个缩略图，会以为后 3 张没连上。
+    return <div className="learning-node__ref-row">
+      <span className="learning-node__seg-label">参考</span>
+      {named.length
+        ? <div className="learning-node__frame-chips">{named.slice(0, 9).map((asset, index) => <RefThumb
+          key={`${asset.url}-${index}`}
+          url={asset.url}
+          label={asset.label}
+          index={index + 1}
+          onRemove={asset.nodeId ? () => removeIncomingRef(nodeId, asset.nodeId) : null}
+        />)}{named.length > 9 ? <span className="learning-node__ref-empty">还有 {named.length - 9} 个没显示（最多 9 张图片 / 3 段视频 / 3 条音频）</span> : null}</div>
+        : <span className="learning-node__ref-empty">未连接（图片/视频/音频连过来即可）</span>}
+      {/* 对口型 + 连了音频：上游**不会**替你把音频转成台词，台词得写在提示词里（H3 文档原文的写法）。 */}
+      {audioHint ? <span className="learning-node__ref-note">{audioHint}{lockedAudioRole === 'VOICE_REFERENCE' ? '' : '；要让角色念台词，台词要写在提示词里：口型跟随 <Audio 1>，说：<d>[中文] 你好呀。</d>'}</span> : null}
+    </div>;
+  }
+  if (!supportsFirstFrame && !supportsLastFrame) return null;
+  const firstRef = incomingRefs[0] || null;
+  const lastRef = supportsLastFrame ? (incomingRefs[1] || null) : null;
+  const first = firstRef?.url || referenceUrl || '';
+  const chip = (url, name, sourceNodeId) => url
+    ? <RefThumb url={url} label={`${name} · 已连接`} onRemove={sourceNodeId ? () => removeIncomingRef(nodeId, sourceNodeId) : removePreset} />
+    : <span className="learning-node__ref-empty">{name}未连接（从图片节点连过来）</span>;
+  return <div className="learning-node__ref-row">
+    <span className="learning-node__seg-label">画面</span>
+    <div className="learning-node__frame-chips">{chip(first, '首帧', firstRef?.nodeId)}{chip(lastRef?.url || '', '尾帧', lastRef?.nodeId)}</div>
+  </div>;
+}
+
+// 一键复制（用户口径 2026-09-18 晚：生成出来的文字要能复制，且右上角给一个复制按钮）。
+// ⚠️ 2026-09-21 用户复验：「还是错位的，应该放在右上角」—— 挂在**卡片标题行**的最右侧（见 NodeFrame
+//    的 headingExtra），不是结果块的右上角（那样会压着结果块的边框与滚动条）。
+// 优先用剪贴板 API（生产是 HTTPS、本地 localhost 都算安全上下文）；被拒或老浏览器退回
+// textarea + execCommand —— 别让按钮点了没反应。复制成功后按钮上自己变「已复制」。
+function CopyTextButton({ text, onCopied }) {
+  const [done, setDone] = useState(false);
+  async function copy() {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const area = document.createElement('textarea');
+        area.value = text; area.style.position = 'fixed'; area.style.opacity = '0';
+        document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove();
+      }
+      setDone(true); onCopied?.();
+      setTimeout(() => setDone(false), 1600);
+    } catch { setDone(false); }
+  }
+  // `nodrag`：按钮现在挂在**标题行**里（原来是挂在结果块的 nodrag 包裹层里），不带它按下去会被当成拖框体。
+  return <button type="button" className="learning-node__copy nodrag" onClick={copy} aria-label={done ? '已复制' : '复制文字'}>{done ? '已复制' : '复制'}</button>;
+}
+
+// 文字框体：卡片只负责展示（标题 + 生成结果），提示词与生成按钮都在画布底部面板里。
+// ⚠️ 2026-09-18 晚用户口径：生成结果**要能选中里面的文字复制**，并在右上角给一键复制按钮。
+// 画布整体是拖拽面（react-flow），默认选不中文字 —— 所以结果块显式 `user-select:text`；
+// 复制按钮走 `headingExtra` 落在**卡片右上角**（标题行最右），按钮自己带 `nodrag`。
+function PromptNode({ id, data, selected }) {
+  const { updateNode } = useCanvasActions();
+  const generated = String(data.generatedText || '');
+  return <NodeFrame icon="✎" tone="prompt" aspectRatio={boxDisplayRatio(data)} processing={data.generationStatus === 'PENDING'} title={data.title} selected={selected} onRename={(value) => updateNode(id, { title: value })} headingExtra={generated ? <CopyTextButton text={generated} /> : null}>
+    {generated
+      ? <div className={`learning-node__text-wrap nodrag ${NO_WHEEL_ZOOM_CLASS}`}>
+        <div className="learning-node__text-result">{generated}</div>
+      </div>
+      // 文本框体也要有数字进度（用户 2026-09-21 口径：视频/图片/音乐/文本四类都要）
+      : data.generationStatus === 'PENDING' ? <GeneratingState className="learning-node__art" modality="TEXT" startedAt={data.generationStartedAt} />
+        : <div className="learning-node__art learning-node__art--illustration"><img src={BOX_EMPTY_ART} alt={data.slotType === 'text' ? '还没生成 —— 在底部面板写提示词，生成文字' : '还没生成 —— 在底部面板写下内容'} loading="lazy" /></div>}
+  </NodeFrame>;
+}
+
+function SlotParams({ data }) {
+  if (!data.slotType) return null;
+  const params = [];
+  if (data.aspectRatio) params.push(data.aspectRatio);
+  const quality = data.resolution || data.size;
+  if (quality) params.push(quality);
+  if (data.durationSeconds) params.push(`${data.durationSeconds}秒`);
+  if (data.audio) params.push('含音频');
+  // 模型这一格显示**运营配的显示名**（服务端下发的 modelLabel）；没配别名时它 === 真 ID
+  // （2026-09-23 用户口径：「在画布…模型名字这里可以映射我改过的名字」）。
+  if (data.modelLabel || data.model) params.push(data.modelLabel || data.model);
+  if (!params.length) return null;
+  return <span className="learning-node__slot-params">{params.join(' · ')}</span>;
+}
+
+// 平台没给框体定参数时，学生在画布上自己挑。用参考那套「标签 + 分段胶囊」排版：
+// 选中项是主色实心胶囊，其余是暗色文字、悬停提亮；「自动」= 不下发该参数、用模型默认值。
+function SlotParamPickers({ id, data }) {
+  const { updateNode, readOnly } = useCanvasActions();
+  const options = data.paramOptions;
+  if (readOnly || !data.slotType || !options) return null;
+  const student = data.studentParams || {};
+  const rows = [];
+  if (!data.aspectRatio && Array.isArray(options.aspectRatios) && options.aspectRatios.length) rows.push({ key: 'aspectRatio', label: '画幅', ratio: true, items: options.aspectRatios.map((value) => ({ value, label: value })) });
+  if (!data.resolution && Array.isArray(options.resolutions) && options.resolutions.length) rows.push({ key: 'resolution', label: '清晰度', items: options.resolutions.map((value) => ({ value, label: value })) });
+  const durationOpen = data.slotType === 'video' && (data.durationSeconds === null || data.durationSeconds === undefined);
+  if (durationOpen && Array.isArray(options.durations) && options.durations.length) rows.push({ key: 'durationSeconds', label: '时长', items: options.durations.map((value) => ({ value: String(value), label: `${value} 秒` })) });
+  const audioOpen = data.slotType === 'video' && data.audio !== true && data.audio !== false && options.audio === true;
+  if (!rows.length && !audioOpen) return null;
+  const update = (key, value) => updateNode(id, { studentParams: { ...student, [key]: value } });
+  return <div className="learning-node__seg-rows nodrag">
+    {rows.map((row) => <div className={`learning-node__seg-row${row.ratio ? ' is-ratio' : ''}`} key={row.key}>
+      <span className="learning-node__seg-label">{row.label}</span>
+      <div className="learning-node__seg" role="group" aria-label={`${data.title || '框体'}${row.label}`}>
+        <button type="button" className={student[row.key] ? '' : 'is-on'} title={`按课程默认（${row.items[0].label}）`} onClick={() => update(row.key, '')}>{row.ratio ? <span className="learning-node__seg-thumb-box" aria-hidden="true"><i className="learning-node__seg-thumb is-auto" /></span> : null}自动</button>
+        {row.items.map((item) => {
+          const thumb = row.ratio ? ratioThumbSize(item.value) : null;
+          return <button type="button" key={item.value} className={String(student[row.key]) === item.value ? 'is-on' : ''} onClick={() => update(row.key, item.value)}>
+            {/* ⚠️ 缩略图必须放在**固定高度**的框里：各档比例不一样高（9:16 高、16:9 扁），
+                直接当按钮的 flex 子项会把文字顶到不同高度 —— 看上去就是「布局很乱、
+                底部对不齐」（用户 2026-09-17 反馈）。最长边就是 18px，所以框取 18×18。 */}
+            {row.ratio ? <span className="learning-node__seg-thumb-box" aria-hidden="true">{thumb ? <i className="learning-node__seg-thumb" style={{ width: `${thumb.width}px`, height: `${thumb.height}px` }} /> : null}</span> : null}
+            {item.label}
+          </button>;
+        })}
+      </div>
+    </div>)}
+    {audioOpen ? <div className="learning-node__seg-row">
+      <span className="learning-node__seg-label">音频</span>
+      <div className="learning-node__seg" role="group" aria-label={`${data.title || '框体'}音频`}>
+        <button type="button" className={student.audio === true ? '' : 'is-on'} onClick={() => update('audio', false)}>不带音频</button>
+        <button type="button" className={student.audio === true ? 'is-on' : ''} onClick={() => update('audio', true)}>带音频</button>
+      </div>
+    </div> : null}
+  </div>;
+}
+
+// 组装这次生成要用的参数：平台定过的用平台的，没定的用学生选的。
+// ⚠️ 「自动」要**原样送上去**（`'auto'`），不能在客户端就折成"第一个比例"：折了之后服务端
+//    分不清"学生要自动"还是"学生明确选了 16:9"，而这两种在上游是两套语义 ——
+//    关键帧（图生视频）请求传 `adaptive` 才会**读首帧图的比例**，否则 4:3 的图会被硬拉成 16:9
+//    （用户 2026-09-21 报的「生成出来是扁的画面」）。图片那条的「自动」仍折成第一个比例：
+//    图片模型对 `size: auto` 的支持随型号而异（2.0 的文档里没有），不冒险。
+function resolveSlotParams(data) {
+  const options = data.paramOptions || {};
+  const student = data.studentParams || {};
+  const autoRatio = data.slotType === 'video' ? 'auto' : (options.aspectRatios?.[0] || '');
+  const params = {
+    aspectRatio: data.aspectRatio || student.aspectRatio || autoRatio,
+    resolution: data.resolution || student.resolution || options.resolutions?.[0] || '',
+  };
+  if (data.slotType === 'video') {
+    const duration = Number(data.durationSeconds) || Number(student.durationSeconds) || options.durations?.[0] || 0;
+    if (duration) params.durationSeconds = duration;
+    params.audio = (data.audio === true || data.audio === false ? data.audio : student.audio === true) && options.audio === true;
+  }
+  return params;
+}
+
+function ImageNode({ id, data, selected }) {
+  const { updateNode } = useCanvasActions();
+  // 框体预置素材：老师为这个框体上传的参考图，生成前先给学生看。
+  const referenceUrl = !data.previewUrl && !data.assetUrl ? String(data.referenceUrl || '') : '';
+  const imageUrl = useDisplayUrl(data.previewUrl || data.assetUrl || referenceUrl);
+  return <NodeFrame icon="✦" tone="image" aspectRatio={boxDisplayRatio(data)} variant="media" processing={data.generationStatus === 'PENDING' || data.uploading === true} title={data.title} selected={selected} onRename={(value) => updateNode(id, { title: value })}>
+    {data.uploading === true || data.uploadError ? <UploadState className="learning-node__art" data={data} />
+      : data.generationStatus === 'PENDING' ? <GeneratingState className="learning-node__art" modality="IMAGE" startedAt={data.generationStartedAt} />
+      : imageUrl
+        ? <img className="learning-node__media" src={imageUrl} alt={data.caption || 'AI生成画面'} loading="lazy" decoding="async" />
+        : <div className="learning-node__art learning-node__art--illustration"><img src={BOX_EMPTY_ART} alt="还没生成 —— 在底部面板写画面描述，生成画面" loading="lazy" /></div>}
+  </NodeFrame>;
+}
+function CharacterNode({ id, data, selected }) {
+  const { updateNode } = useCanvasActions();
+  return <NodeFrame icon="♙" tone="character" aspectRatio={boxDisplayRatio(data)} processing={data.generationStatus === 'PENDING'} title={data.title || '故事角色'} selected={selected}>
+    <div className="learning-node__character-art">{data.emoji || '🧒'}</div>
+    <input className="learning-node__input nodrag" value={data.name || ''} placeholder="角色名字" maxLength={40} onChange={(event) => updateNode(id, { name: event.target.value })} />
+    <input className="learning-node__input learning-node__input--compact nodrag" value={data.trait || ''} placeholder="性格、能力或目标" maxLength={80} onChange={(event) => updateNode(id, { trait: event.target.value })} />
+    <input className="learning-node__emoji nodrag" value={data.emoji || ''} aria-label="角色表情" maxLength={2} onChange={(event) => updateNode(id, { emoji: event.target.value })} />
+    {selected && <span className="learning-node__hint">先介绍角色，再把它连接到场景和故事片段</span>}
+  </NodeFrame>;
+}
+
+function SceneNode({ id, data, selected }) {
+  const { updateNode } = useCanvasActions();
+  return <NodeFrame icon="⌂" tone="scene" aspectRatio={boxDisplayRatio(data)} processing={data.generationStatus === 'PENDING'} title={data.title || '故事场景'} selected={selected}>
+    <div className="learning-node__scene-art"><span>{data.emoji || '🌲'}</span><small>{data.mood || '神秘氛围'}</small></div>
+    <input className="learning-node__input nodrag" value={data.place || ''} placeholder="场景地点" maxLength={60} onChange={(event) => updateNode(id, { place: event.target.value })} />
+    <input className="learning-node__input learning-node__input--compact nodrag" value={data.mood || ''} placeholder="氛围，例如：温暖、紧张" maxLength={80} onChange={(event) => updateNode(id, { mood: event.target.value })} />
+    <input className="learning-node__emoji nodrag" value={data.emoji || ''} aria-label="场景表情" maxLength={2} onChange={(event) => updateNode(id, { emoji: event.target.value })} />
+    {selected && <span className="learning-node__hint">记录故事发生的地点和氛围，让画面更完整</span>}
+  </NodeFrame>;
+}
+
+function VideoNode({ id, data, selected }) {
+  const { updateNode } = useCanvasActions();
+  const inputModes = Array.isArray(data.inputModes) && data.inputModes.length
+    ? data.inputModes
+    : (data.requiresFirstFrame === true ? ['FIRST_FRAME'] : ['TEXT']);
+  const supportsFirstFrame = inputModes.includes('FIRST_FRAME');
+  const referenceUrl = !data.previewUrl && !data.assetUrl && supportsFirstFrame ? String(data.referenceUrl || '') : '';
+  const videoUrl = useDisplayUrl(data.previewUrl || data.assetUrl);
+  // ⚠️ **连过来的素材不算框体的画面**（用户 2026-09-11：「连线不会影响框体变化，应该一直是默认框体，
+  // 只有生成出来的图/视频/音频才会出现在框体内」）。所以这里只看框体自己的预置素材和自己的生成结果；
+  // 连线素材只在底部面板的「参考/首帧」行里出现，生成时再一起提交。
+  const sourceUrl = useDisplayUrl(referenceUrl);
+  return <NodeFrame icon="▶" tone="video" aspectRatio={boxDisplayRatio(data)} variant="media" processing={data.generationStatus === 'PENDING' || data.uploading === true} title={data.title} selected={selected} onRename={(value) => updateNode(id, { title: value })}>
+    {data.uploading === true || data.uploadError ? <UploadState className="learning-node__video-preview" data={data} />
+      : data.generationStatus === 'PENDING' ? <GeneratingState className="learning-node__video-preview" modality="VIDEO" startedAt={data.generationStartedAt} />
+      : videoUrl
+        ? <video className="learning-node__media" controls playsInline preload="none" src={videoUrl} />
+        : sourceUrl
+          // 画面本体就是卡片，按素材自身比例铺满；画面也可以直接拖着走（不再有「点图放大」）
+          ? <img className="learning-node__media" src={sourceUrl} alt="画面来源" loading="lazy" decoding="async" />
+          : <div className="learning-node__video-preview learning-node__art--illustration"><img src={BOX_EMPTY_ART} alt="还没生成 —— 在底部面板写提示词，生成短片" loading="lazy" /></div>}
+  </NodeFrame>;
+}
+
+function NoteNode({ id, data, selected }) {
+  const { updateNode } = useCanvasActions();
+  return <NodeFrame icon="☼" tone="note" aspectRatio={boxDisplayRatio(data)} processing={data.generationStatus === 'PENDING'} title={data.title || '创作便签'} selected={selected}>
+    <textarea className="learning-node__textarea nodrag" value={data.text || ''} placeholder="记录一个创作想法…" maxLength={300} onChange={(event) => updateNode(id, { text: event.target.value })} />
+    {selected && <span className="learning-node__hint">便签可以保存你的灵感</span>}
+  </NodeFrame>;
+}
+
+// 音频节点按本课开放的音频能力提供生成入口（音乐 / 播客 / 配音）。
+const AUDIO_MODALITIES = [['MUSIC', '生成音乐']];
+
+/**
+ * 「下载到本地」用哪个地址（用户 2026-09-28：音乐框体要能下载）。
+ *
+ * 三种情况，按可靠性排：
+ *   · `/api/...` → 用**原始地址**：同源、自动带 cookie，服务端那条下载口本来就带
+ *     `Content-Disposition: attachment`，而且**只有同源才认 `download` 属性**（能按我们给的名字存）。
+ *     用 resolve 出来的 blob: 反而多一次内存副本，没必要。
+ *   · 已经取回内存的 `blob:`（跨域签名地址那种解析成功的）→ 用它，`download` 属性对 blob: 是认的。
+ *   · 其余（跨域 http 直链）只能给原地址：浏览器可能直接播放而不是下载 —— 那是浏览器的限制
+ *     （跨域时 `download` 属性会被忽略），不是我们少写了什么。
+ */
+function downloadHrefFor(raw, resolved) {
+  const rawUrl = String(raw || '');
+  if (rawUrl.startsWith('/api/')) return rawUrl;
+  const shown = String(resolved || '');
+  if (shown.startsWith('blob:')) return shown;
+  return rawUrl || shown;
+}
+
+function AudioNode({ id, data, selected }) {
+  const { updateNode } = useCanvasActions();
+  // ⚠️ 原始地址（`data.*`）与"给标签用的地址"（resolve 后的 blob / 原样）要分开留：
+  //    前者拿去下载（同源才认 download 属性），后者留给 <audio> 播放。
+  const rawAudioUrl = String(data.previewUrl || data.assetUrl || '');
+  const audioUrl = useDisplayUrl(rawAudioUrl);
+  return <NodeFrame icon="♫" tone="audio" aspectRatio={boxDisplayRatio(data)} processing={data.generationStatus === 'PENDING' || data.uploading === true} title={data.title} selected={selected} onRename={(value) => updateNode(id, { title: value })}>
+    {data.uploading === true || data.uploadError ? <UploadState className="learning-node__audio-placeholder" data={data} />
+      : data.generationStatus === 'PENDING' ? <GeneratingState className="learning-node__audio-placeholder" modality="MUSIC" startedAt={data.generationStartedAt} />
+      : audioUrl
+        // 用户 2026-09-22：「播放器进度条被压缩很小了，有没有可能是两行，第一行是进度条、
+        // 第二行才是操作按钮」—— 原生 <audio controls> 的内部布局改不了，所以换成自己画的两行式。
+        // ⚠️ 换掉原生控件的同时也换掉了浏览器右键的「音频另存为」→ 所以播放器里那个
+        //    「下载到本地」按钮是**必须**的（用户 2026-09-28 报的正是"右键也没有"）。
+        ? <AudioPlayer className="learning-node__audio" src={audioUrl} label={data.title} downloadHref={downloadHrefFor(rawAudioUrl, audioUrl)} />
+        : <div className="learning-node__audio-placeholder learning-node__art--illustration"><img src={BOX_EMPTY_ART} alt="还没生成 —— 在底部面板写歌词或描述，生成音乐" loading="lazy" /></div>}
+  </NodeFrame>;
+}
+
+function AnimationNode({ id, data, selected }) {
+  const { updateNode } = useCanvasActions();
+  const videoUrl = useDisplayUrl(data.previewUrl || data.assetUrl);
+  return <NodeFrame icon="✧" tone="animation" aspectRatio={boxDisplayRatio(data)} variant="media" processing={data.generationStatus === 'PENDING' || data.uploading === true} title={data.title} selected={selected} onRename={(value) => updateNode(id, { title: value })}>
+    {data.uploading === true || data.uploadError ? <UploadState className="learning-node__animation-placeholder" data={data} />
+      : data.generationStatus === 'PENDING' ? <GeneratingState className="learning-node__animation-placeholder" modality="VIDEO" startedAt={data.generationStartedAt} />
+      : videoUrl
+        ? <video className="learning-node__media" controls muted loop preload="none" src={videoUrl} />
+        : <div className="learning-node__animation-placeholder learning-node__art--illustration"><img src={BOX_EMPTY_ART} alt="还没生成 —— 在底部面板写提示词，生成动画" loading="lazy" /></div>}
+  </NodeFrame>;
+}
+
+// 连到视频节点上的素材按节点类型归类（全能参考用）
+const NODE_ASSET_KIND = Object.freeze({ image: 'IMAGE', video: 'VIDEO', animation: 'VIDEO', audio: 'AUDIO' });
+
+// 连线：干净贝塞尔曲线 + 一段沿路径游走的主色高光（复刻参考的发光连线，方向由光带表达）。
+function GlowEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, selected, source, target }) {
+  const { removeEdge } = useCanvasActions();
+  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
+  return <>
+    <BaseEdge id={id} path={path} className={`learning-edge${selected ? ' is-selected' : ''}`} />
+    <path d={path} className="learning-edge__glow" />
+    {selected && removeEdge ? <EdgeLabelRenderer>
+      <button
+        type="button"
+        className="learning-edge__delete nodrag nopan"
+        style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
+        title="删除这条连接"
+        aria-label="删除这条连接"
+        onClick={(event) => { event.stopPropagation(); removeEdge(id); }}
+      >×</button>
+    </EdgeLabelRenderer> : null}
+  </>;
+}
+const edgeTypes = { default: GlowEdge };
+
+// 画布底部面板（复刻参考的独立底部面板）：编辑当前选中的框体——
+// 提示词 / 画面来源行 / 画幅·清晰度·时长分段胶囊 / 页脚（状态胶囊 + 配置 + ＋ + 生成 ↑）。
+function NodeEditPanel({ node, onRequestMaterials, boxModalities = [] }) {
+  const { updateNode, generateNode, canGenerate, readOnly, enabledCapabilities, getIncomingImageAssetUrls, getIncomingImageRefs, getIncomingAssetRefs } = useCanvasActions();
+  // 输入框里的 @ 引用：@ 打开候选（连线连过来的素材 + 框体预置素材），选中就把「图片 1」这样的名字插进提示词。
+  // hook 必须放在下面所有提前 return 之前（提前 return 之后再加 hook 会白屏，p34 守卫盯着这条）。
+  const citationInsertRef = useRef(null);   // 由 PromptEditor 填进来：在光标处插引用芯片
+  const [mention, setMention] = useState(null);
+  if (!node) return null;
+  const id = node.id;
+  const data = node.data || {};
+  const slotType = String(data.slotType || node.type || '').toLowerCase();
+  const isBox = Boolean(data.boxId);
+  // 锁定了生成方式就把中文标签塞进配置胶囊（'生视频 · 480P · MiniMax-H3 · 首尾帧'）—— 标签由服务端下发。
+  const modeChip = String(data.inputModeLabel || '');
+  const configLabel = (() => {
+    const kind = slotType === 'image' ? '生图' : slotType === 'video' ? '生视频' : slotType === 'audio' || slotType === 'music' ? '音乐' : slotType === 'text' || slotType === 'prompt' ? '文字' : '';
+    if (!kind) return '未配置';
+    const params = [data.aspectRatio, data.resolution].filter(Boolean);
+    // 同 SlotParams：显示运营配的显示名（没配别名时 === 真 ID）
+    if (data.modelLabel || data.model) params.push(data.modelLabel || data.model);
+    // 锁定的生成方式也要看得见（'生视频 · 480P · MiniMax-H3 · 首尾帧'）—— 老师配的就是这条规则
+    if (modeChip) params.push(modeChip);
+    if (data.uploaded) return '本地素材';
+    return params.length ? `${kind} · ${params.join(' · ')}` : kind;
+  })();
+  const promptValue = data.slotType === 'image' ? (data.caption || '') : (data.text || data.caption || '');
+  const setPrompt = (value) => (data.slotType === 'image' ? updateNode(id, { caption: value }) : updateNode(id, { text: value, caption: value }));
+  const placeholder = slotType === 'image' ? '描述画面要画什么…'
+    : slotType === 'video' ? '描述画面要如何运动…'
+      : slotType === 'music' || slotType === 'audio' ? (data.mode === 'DESCRIPTION' ? '描述你想要的音乐是什么样子…' : '写下要唱的歌词…')
+        : slotType === 'animation' ? '动画说明 / 提示词…'
+          : '写下你想让 AI 生成什么…';
+  const missingPrompt = !String(promptValue).trim();
+  const state = data.generationStatus === 'PENDING' ? 'running'
+    : data.generationStatus === 'FAILED' ? 'failed'
+      : data.uploaded ? 'asset'
+        : (data.assetUrl || data.generatedText) ? 'done' : 'empty';
+  // 视频框体「连过来的素材怎么用」的**一处**判定（生成 payload 与面板那行提示都读它，别各写一遍）。
+  //
+  // 2026-09-21 用户口径（两条，都很关键）：
+  //  ①「视频生成出来跟参考也不一样啊」→ 原来的根因是**语义错了**：只要模型声明了全能参考，
+  //    就把连过来的图一律当"参考"发 —— 而"参考"在上游是"启发素材"（画一段像它的），
+  //    不是"这张图动起来"（**首帧**）。所以默认**能当帧就当帧**（全是图片、1~2 张、模型也支持帧）。
+  //  ②「文生视频/图生视频、首尾帧、全能参考是**完全不一样的概念**……并不是靠我们连线的多少来决定的。
+  //    有可能连 2 张图片，但是并不需要首尾帧，而是全能参考的模式。」
+  //    → 所以**课包锁定的生成方式赢过推断**：`data.inputMode` 有值就按它走（下面 lockedMode 那几条），
+  //      没锁才用"能当帧就当帧"。
+  //  ③ 锁成文生视频时**根本不该有线**（`useFrames`/`useOmni` 都 false，连线也不让拉 —— 见 isValidConnection）。
+  const videoInputPlan = (() => {
+    const modes = Array.isArray(data.inputModes) && data.inputModes.length ? data.inputModes : (data.requiresFirstFrame === true ? ['FIRST_FRAME'] : ['TEXT']);
+    const supportsText = modes.includes('TEXT');
+    const supportsFirstFrame = modes.includes('FIRST_FRAME') || modes.includes('FIRST_LAST_FRAME') || modes.includes('OMNI_REFERENCE');
+    // ⚠️ 尾帧的模态值是 `FIRST_LAST_FRAME`，不是 `LAST_FRAME` —— 原来写错了，尾帧永远不亮
+    //    （服务端 `acceptsLastFrame` 看的就是 FIRST_LAST_FRAME，两边口径又不一致）。
+    const supportsLastFrame = modes.includes('FIRST_LAST_FRAME');
+    const omni = modes.includes('OMNI_REFERENCE');
+    const frameUrls = getIncomingImageAssetUrls(id);
+    const allRefs = getIncomingAssetRefs(id);
+    const frameCapacity = supportsLastFrame ? 2 : 1;
+    // 课包锁定的生成方式（'' = 没锁）：锁了就按它决定"连过来的东西算什么"
+    const lockedMode = String(data.inputMode || '').toUpperCase();
+    const lockedFrames = lockedMode === 'FIRST_FRAME' || lockedMode === 'FIRST_LAST_FRAME';
+    const useFrames = lockedMode
+      ? lockedFrames
+      : (supportsFirstFrame && frameUrls.length > 0 && frameUrls.length <= frameCapacity && frameUrls.length === allRefs.length);
+    const useOmni = lockedMode
+      ? lockedMode === 'OMNI_REFERENCE' && allRefs.length > 0
+      : (!useFrames && omni && allRefs.length > 0);
+    // ⚠️ **面板显示哪一行，由框体的「模式」决定，不由"连没连东西"决定。**
+    //    锁成全能参考、但学生还没连线时，`useOmni` 是 false（它要求 allRefs.length > 0）→
+    //    面板会退回「画面 / 首帧未连接 / 尾帧未连接」那一行 —— 而这两种画面在这个模式下**根本不存在**
+    //    （用户 2026-09-22 报的图5：「图5是全能参考的模式，为什么画面那还显示首帧尾帧」）。
+    //    所以行的选择用 omniRow（跟着锁走），**发给上游的素材仍然用 useOmni**（那个必须看实际连线）。
+    const omniRow = lockedMode ? lockedMode === 'OMNI_REFERENCE' : useOmni;
+    return {
+      modes, supportsText, supportsFirstFrame, supportsLastFrame, omni, omniRow, frameUrls, allRefs, useFrames, useOmni, lockedMode,
+      // 课包锁的「音频怎么用」（LIP_SYNC 对口型 / VOICE_REFERENCE 声音参考）：只影响面板读面
+      // —— 真正的 role（drive_audio / reference_audio）由服务端按同一份课包配置决定，客户端不参与。
+      audioRole: String(data.audioRole || 'LIP_SYNC').toUpperCase() === 'VOICE_REFERENCE' ? 'VOICE_REFERENCE' : 'LIP_SYNC',
+      // 锁成文生视频：不该有线（面板要明说"这个框体只写提示词"，连线也被挡在 isValidConnection 里）
+      textOnly: lockedMode === 'TEXT',
+      sourceAssetUrl: useFrames ? (frameUrls[0] || String(data.referenceUrl || '')) : '',
+      lastFrameAssetUrl: useFrames && supportsLastFrame ? String(frameUrls[1] || '') : '',
+      referenceAssets: useOmni ? allRefs : [],
+    };
+  })();
+  const generate = (() => {
+    // ⚠️ `referenceAssets` 不能省：连到生图框体上的素材就是「照这张图改」的意思。
+    // 以前这里**没有带**（只有视频分支带），于是面板上写着「引用中」、请求里一张参考图都没有，
+    // 出来的是另一张画（用户 2026-09-17 报「引用没有真实生效」的三层之一）。
+    if (slotType === 'image') return { modality: 'IMAGE', label: data.assetUrl ? '重新生成' : '生成画面', payload: { title: data.title || '画面灵感', prompt: data.caption || '', referenceAssets: getIncomingAssetRefs(id), params: resolveSlotParams(data) }, blocked: missingPrompt ? '先写下画面描述，再生成' : '' };
+    if (slotType === 'video' || slotType === 'animation') {
+      const { supportsText, supportsFirstFrame, supportsLastFrame, sourceAssetUrl, lastFrameAssetUrl, referenceAssets } = videoInputPlan;
+      const needFrame = supportsFirstFrame && !supportsText && !sourceAssetUrl && !referenceAssets.length;
+      return {
+        modality: 'VIDEO', label: data.assetUrl ? '重新生成' : '生成短片',
+        payload: { title: data.title || '故事短片', prompt: data.text || '', sourceAssetUrl, lastFrameAssetUrl, referenceAssets, params: resolveSlotParams(data) },
+        blocked: needFrame ? '该模型需要先连接一张画面（首帧）' : (missingPrompt ? '先写下这一段的提示词，再生成' : ''),
+      };
+    }
+    if (slotType === 'music' || slotType === 'audio') {
+      const enabled = enabledCapabilities?.has('music');
+      return {
+        modality: 'MUSIC', label: data.assetUrl ? '重新生成' : '生成音乐',
+        payload: { title: data.title || '音频素材', prompt: promptValue, boxId: data.boxId || '' },
+        blocked: !enabled ? '本课未开放 AI 音乐' : (missingPrompt ? (data.mode === 'DESCRIPTION' ? '先描述你想要的音乐' : '先写下要唱的歌词') : ''),
+      };
+    }
+    if (slotType === 'text' || slotType === 'prompt') {
+      return { modality: 'TEXT', label: data.generatedText ? '重新生成' : '生成文字', payload: { title: data.title || 'AI 文字', prompt: promptValue }, blocked: missingPrompt ? '先写下你想让 AI 写什么' : '' };
+    }
+    return null;
+  })();
+  const supportsPrompt = ['text', 'prompt', 'image', 'video', 'audio', 'music', 'animation'].includes(slotType);
+  if (!supportsPrompt) {
+    return <div className="learning-canvas__panel-inner"><span className="learning-node__seg-label">{data.title || node.type}</span><span className="cv-muted">这个节点直接在卡片上编辑，没有生成参数。</span></div>;
+  }
+  // 「这个节点到底能不能生成」的**一处**判定（按钮显不显示、以及要不要忽略那条陈旧报错，都读它）：
+  // ① 本课给这个模态配了生成框体吗？配了 → 只有框体节点能生成。
+  //    服务端就是这么判的（`resolveLessonGenerationBox`：本课有该模态的框体、而这个节点没有 boxId
+  //    → 403 `GENERATION_BOX_REQUIRED`「请从课时配置的生成框体发起生成」）。
+  //    学生画布上除了框体，还能拖进本地文件、放普通素材节点 —— 它们以前也长着生成按钮，
+  //    学生一点必然报错刷红字（用户 2026-09-21：「本来就不能生成就不要显示这个按钮了」）。
+  // ② 已经出过东西的节点也不再显示生成按钮：平台规则是**每个框体只能成功生成一次**，
+  //    再点必被服务端拒（`GENERATION_BOX_USED`「该生成框体已经生成过了」）—— 留着按钮就是误导。
+  const boxModality = { image: 'IMAGE', video: 'VIDEO', animation: 'VIDEO', text: 'TEXT', prompt: 'TEXT', music: 'MUSIC', audio: 'MUSIC' }[slotType] || '';
+  const needsBox = Boolean(boxModality) && boxModalities.includes(boxModality);
+  const canGenerateHere = !needsBox || Boolean(data.boxId);
+  const alreadyProduced = state === 'done' || state === 'asset';
+  // 不能在这里生成的节点：**别把上一次点出来的报错继续挂在面板上**（那是"点了本来就不该点的按钮"造成的），
+  // 状态胶囊回到「未生成」。能生成的节点照旧：真失败仍然要看得见。
+  const statusState = !canGenerateHere && state === 'failed' ? 'empty' : state;
+  // @ 引用的候选：连线连过来的素材（按类型编号）+ 框体自带的预置素材
+  const referenceNames = [
+    ...referenceAssetLabels(getIncomingAssetRefs(id)).map((asset) => ({
+      ...asset,
+      hint: asset.type === 'IMAGE' ? '连线引用' : asset.type === 'VIDEO' ? '连线引用（视频）' : '连线引用（音频）',
+    })),
+    ...(data.referenceUrl ? [{ url: String(data.referenceUrl), label: '框体素材', hint: '框体预置' }] : []),
+  ];
+  const filteredNames = mention?.query ? referenceNames.filter((item) => item.label.includes(mention.query)) : referenceNames;
+  // 选中候选：在光标处插一颗引用芯片（编辑器负责 DOM 插入与光标落点），不再往文本里塞一行字
+  const insertMention = (item) => {
+    setMention(null);
+    citationInsertRef.current?.(item.label);
+  };
+  // 光标前刚打出一个「@」（后面还没跟空格）就把候选打开；再打字就当查询过滤。
+  // 富文本编辑器给的是「光标之前的纯文本」，正好用来判断。
+  const syncMention = (beforeCaret) => {
+    const before = String(beforeCaret ?? '');
+    const at = before.lastIndexOf('@');
+    if (at < 0 || /\s/.test(before.slice(at + 1)) || before.length - at > 12) { setMention(null); return; }
+    setMention({ query: before.slice(at + 1) });
+  };
+  // 面板上不再重复放「连线引用中」的缩略图条：框体自己就显示着那张画面，下面「参考」那行也写了连接情况。
+  // 这一条占 80px 上下，面板一高就更容易压住框体（用户反馈「输入框应该一直在框体下方」）。
+  return <div className="learning-canvas__panel-inner">
+    {/* 明写正在编辑哪个框体：面板会贴到「被选中」的框体下方，而学生可能在看着另一个框体（用户误读成面板跑偏过） */}
+    <div className="learning-canvas__panel-target"><span className="learning-node__seg-label">正在编辑</span><strong>{data.title || node.type}</strong>{referenceNames.length ? <span className="cv-muted">输入 @ 可引用：{referenceNames.map((item) => item.label).join('、')}</span> : null}</div>
+    <div className="learning-node__textarea-wrap">
+      <PromptEditor
+        value={promptValue}
+        refs={referenceNames}
+        readOnly={readOnly}
+        placeholder={placeholder}
+        onChange={(next, beforeCaret) => { setPrompt(next); syncMention(beforeCaret); }}
+        insertRef={citationInsertRef}
+      />
+      {mention && filteredNames.length ? <div className="learning-node__mention" role="listbox" aria-label="插入引用">
+        {filteredNames.slice(0, 8).map((item, index) => <button
+          type="button"
+          key={`${item.url}-${item.label}-${index}`}
+          className="learning-node__mention-item"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => insertMention(item)}
+        ><MentionThumb url={item.url} label={item.label} />{item.label}<small>{item.hint}</small></button>)}
+      </div> : null}
+    </div>
+    {slotType === 'video' || slotType === 'animation' ? <FrameRefRows
+      nodeId={id}
+      incomingRefs={getIncomingImageRefs(id)}
+      referenceUrl={String(data.referenceUrl || '')}
+      omni={videoInputPlan.omniRow}
+      referenceAssets={videoInputPlan.allRefs}
+      supportsFirstFrame={videoInputPlan.supportsFirstFrame}
+      supportsLastFrame={videoInputPlan.supportsLastFrame}
+      lockedMode={videoInputPlan.lockedMode}
+      lockedLabel={modeChip}
+      lockedAudioRole={videoInputPlan.audioRole}
+    /> : null}
+    {/* 生图框体：连过来的素材要**看得见**（缩略图，悬停出大图，右上角 × 断线）。
+        ⚠️ 只在真有连线时才渲染这一行：以前它是无条件渲染的，多占 80px、面板一高就压住框体，
+        用户当时要求去掉（见上面 819 行那条注释）。但那次把「没连时不显示」一并做成了「永远不显示」，
+        而生图框体压根没有别的参考行 —— 于是连了参考图也看不见（用户 2026-09-17 报的第 3 条）。 */}
+    {slotType === 'image' && getIncomingAssetRefs(id).length ? <FrameRefRows
+      nodeId={id}
+      omni
+      referenceAssets={getIncomingAssetRefs(id)}
+    /> : null}
+    <SlotParamPickers id={id} data={data} />
+    <div className="learning-node__panel-footer nodrag">
+      <button type="button" className="learning-canvas__config-chip" title="本框体的生成配置来自课时设置" onClick={() => onRequestMaterials?.()}>✦ {configLabel}</button>
+      <span className="learning-canvas__panel-spacer" />
+      <span className={`learning-node__status-chip${statusState === 'running' ? ' is-running' : statusState === 'failed' ? ' is-error' : (statusState === 'done' || statusState === 'asset') ? ' is-done' : ''}`}>{statusState === 'running' ? '生成中…' : statusState === 'failed' ? (data.generationError || '生成失败') : statusState === 'done' ? '已生成' : statusState === 'asset' ? '素材' : '未生成'}</span>
+      {canGenerate && canGenerateHere && generate && statusState !== 'running' && !alreadyProduced ? <button type="button" className="learning-node__submit" disabled={readOnly || Boolean(generate.blocked)} title={generate.blocked || generate.label} onClick={() => generateNode(id, generate.modality, generate.payload)}>{generate.label}<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg></button> : null}
+    </div>
+    {/* ⚠️ 这里原来会把 generate.blocked（「先写下画面描述，再生成」这类前置提示）渲染成一条红色提示。
+        用户要求「图4 这种提示要全部删除」——按下了就把按钮置灰 + title 提示即可，不再在面板里刷红字。
+        注意：**生成失败**仍然要看得见（那是真出错了，见第五节第 33 条），失败信息在状态胶囊里，不动。 */}
+  </div>;
+}
+
+// 连线两端到底接在哪个圆点上：老快照里的连线没有 handle 字段，按左右位置补上。
+// 渲染（displayEdges）和查重（onConnect）共用这一套规则，否则一条老连线能从反方向再连一次。
+function resolvePortSides(edge, nodeById) {
+  const centerX = (node) => (node?.position?.x || 0) + (node?.measured?.width || node?.width || 250) / 2;
+  const source = nodeById.get(edge.source);
+  const target = nodeById.get(edge.target);
+  const forward = !source || !target || centerX(source) <= centerX(target);
+  return {
+    sourceHandle: edge.sourceHandle || (forward ? 'right' : 'left'),
+    targetHandle: edge.targetHandle || (forward ? 'left' : 'right'),
+  };
+}
+
+// 一条连线只看「哪两个圆点被连上」，方向不算差异：同一对圆点只允许一条线。
+function edgePortPairKey(sourceNodeId, sourceHandle, targetNodeId, targetHandle) {
+  return [`${sourceNodeId}#${sourceHandle}`, `${targetNodeId}#${targetHandle}`].sort().join('|');
+}
+
+const DOCK_WIDTH = 660;
+const DOCK_MARGIN = 14;
+const DOCK_GAP = 14;
+// 初始视野 / 「适配视图」用的分边留白：下边固定留出面板的位置（面板最高约 320px），
+// 其余三边给一点点边距。必须写成 px——ReactFlow 把数字当「比例」解析，不是像素。
+const CANVAS_FIT_PADDING = { top: '24px', right: '40px', bottom: '320px', left: '40px' };
+// 只读查看用的分边留白：**不留底部那 320px** —— 那块输入面板只在可编辑态渲染（见本文件下面 `!readOnly &&`）。
+// 只读态（公开作品页 / 学生自己的作品详情 / 平台端与机构端预览 / 老师课堂看学生作品）的目标是
+// **整幅作品看得见**，四面留一点点边距就够；照抄编辑态那份会让内容被挤到上半截、手机上更明显。
+const CANVAS_READONLY_FIT_PADDING = { top: '20px', right: '20px', bottom: '20px', left: '20px' };
+// 画布缩放范围。**上限必须是 8（800%）**：学生要看清楚素材细节（用户 2026-09-17 报
+// 「放大最多就放大这么多了」，并给了别的平台能放到 800% 的对照）。
+// 以前是 1.8 —— 连一张 1k 图的像素都到不了，等于看不清自己生成的东西。
+const CANVAS_MAX_ZOOM = 8;
+const CANVAS_MIN_ZOOM = 0.35;
+// 只读查看的下限要**更低**：适配视野那一步会被 minZoom 夹住（`setViewport` 里
+// `scaleExtent([minZoom,maxZoom])` 会再夹一次，光给 fitView 传 minZoom 没用 —— 2026-09-27 查过源码）。
+// 一张横向铺开的画布（真实快照常见，如 x 到 1400+）在 390px 的手机上需要 ~0.24 才能整幅装下，
+// 卡在 0.35 就永远露一截 —— 那正是用户报的「没法看」。只读态放宽到 10%，编辑态仍是 0.35
+// （编辑态的下限是给学生"别把自己绕丢"用的，只读查看没这个顾虑）。
+const CANVAS_READONLY_MIN_ZOOM = 0.1;
+// 缩放档位（菜单里的快捷值，与对照平台的 50% / 100% / 800% 一致）
+const CANVAS_ZOOM_STEPS = [0.5, 1, 8];
+
+// 这些字段是「边打字边改」的，连续编辑同一条框体的同一批字段只记一条撤销记录。
+const COALESCED_EDIT_KEYS = new Set(['title', 'caption', 'text', 'name', 'trait', 'place', 'mood', 'emoji', 'studentParams', 'audio']);
+
+// 锚点策略（第十六轮定稿，前后改过三种口径）：
+//  面板锚在**画布坐标系**里 —— 它和框体是同一个坐标系里的两个东西，画布怎么动它们就一起怎么动。
+//  - 拖框体：框体自己的 position 变 → 面板跟着走（本来就是这样）。
+//  - 平移/缩放画布：transform 变 → 面板必须跟着框体一起在屏幕上走。
+// 只认一条规则，别再退回「手势中不动、松手后归位」：那样面板是钉在**屏幕**上的，
+// 一拖画布就和框体分家（用户第十六轮原话：「我移动画布，输入框就保持跟框体一起」）。
+// 位置每帧用 transform 直接算、不加 CSS 过渡（加了跟随就慢半拍）。
+function CanvasDockPanel({ node, containerRef, viewportBusy = false, onRequestRoom, onRequestMaterials, boxModalities = [] }) {
+  const panelRef = useRef(null);
+  const [panelHeight, setPanelHeight] = useState(0);
+  const [box, setBox] = useState({ width: 0, height: 0 });
+  // 直接订阅 ReactFlow 的视口 transform：平移/缩放时每帧重算，面板天然与框体同步。
+  const transform = useStore((state) => state.transform);
+
+  // 面板高度随内容变（分段参数出现/消失、提示词换行），量出来才能判断放得下放不下。
+  useLayoutEffect(() => {
+    const element = panelRef.current;
+    if (!element) return undefined;
+    const sync = () => {
+      const next = element.offsetHeight;
+      setPanelHeight((current) => (Math.abs(current - next) < 0.5 ? current : next));
+    };
+    sync();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(sync);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  useLayoutEffect(() => {
+    const element = containerRef.current;
+    if (!element) return undefined;
+    const sync = () => {
+      const rect = element.getBoundingClientRect();
+      setBox((current) => (Math.abs(current.width - rect.width) < 0.5 && Math.abs(current.height - rect.height) < 0.5 ? current : { width: rect.width, height: rect.height }));
+    };
+    sync();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', sync);
+      return () => window.removeEventListener('resize', sync);
+    }
+    const observer = new ResizeObserver(sync);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [containerRef]);
+
+  const [tx = 0, ty = 0, scale = 1] = Array.isArray(transform) ? transform : [];
+  const zoom = scale || 1;
+  const nodeWidth = (node.measured?.width || node.width || 250) * zoom;
+  const nodeHeight = (node.measured?.height || node.height || 160) * zoom;
+  const nodeLeft = node.position.x * zoom + tx;
+  const nodeTop = node.position.y * zoom + ty;
+  const panelWidth = Math.max(280, Math.min(DOCK_WIDTH, box.width - DOCK_MARGIN * 2));
+  // 位置只有一条规则：**面板永远居中在框体正下方 14px**（x = 框体中心 − 面板宽/2，y = 框体底边 + 14）。
+  //
+  // ⚠️ 这里**不做任何夹取/左右对齐**（第十六轮之后用户又反馈一次「为什么还是跟着画布跑」）：
+  //   只要出现「越界就夹住」或「越界就改成与框体左/右边对齐」，面板就会在框体贴到画布边缘时
+  //   停在画布边上、和框体分家 —— 用户看到的就是「画布上一个框体都没有，左下角却杵着个输入框」。
+  //   越界的问题改用下面的「动画布让位」解决，所以框体在画布里时面板永远是完整可见的。
+  //   参考实现是「居中后硬夹住」，我们**故意不跟**。
+  const x = nodeLeft + nodeWidth / 2 - panelWidth / 2;
+  const idealY = nodeTop + nodeHeight + DOCK_GAP;
+  const y = idealY;
+  // 面板越出画布多少 —— 不靠夹面板解决，改成把**画布**挪一挪（「让位」），
+  // 这样面板既能一直在框体正下方，又不会被容器 overflow:hidden 裁掉（最多会裁掉生成按钮）。
+  const overflowLeft = Math.max(0, DOCK_MARGIN - x);
+  const overflowRight = Math.max(0, x + panelWidth - (box.width - DOCK_MARGIN));
+  const overflowBottom = panelHeight ? Math.max(0, idealY + panelHeight - (box.height - DOCK_MARGIN)) : 0;
+  // 只有「框体还在画布里」时才让位：用户把框体平移出画布是有意为之，这时候不能去抢他的视图，
+  // 面板照旧贴在框体下方、跟着一起出去（这正是不夹取的意义）。
+  const frameOnScreen = box.width > 0
+    && nodeLeft + nodeWidth > 0 && nodeLeft < box.width
+    && nodeTop + nodeHeight > 0 && nodeTop < box.height;
+  const roomX = !frameOnScreen ? 0 : (overflowLeft > 0 ? Math.ceil(overflowLeft) : (overflowRight > 0 ? -Math.ceil(overflowRight) : 0));
+  const roomY = !frameOnScreen || overflowBottom <= 0 ? 0 : -Math.min(Math.ceil(overflowBottom), 400);
+  // 面板在框体正下方放不下/越出画布时：请求把画布挪一挪，把位置让出来。
+  // 用户前后反馈了四次「输入框必须一直在框体下方」，光夹面板做不到这一点，只能动画布。
+  //
+  // ⚠️ 三条必须守住：
+  //   ① **用户正在平移/缩放画布时绝不发** —— 否则拖画布的过程中视图会被顶一下
+  //      （第十五轮用户反馈「移动画布时输入框乱动」就是这个）。用 viewportBusy 挡掉
+  //      （CanvasSurface 在 onMoveStart/onMoveEnd 之间置真）；松手后这里会重算，仍越界才补一次。
+  //   ② **同一个缺口只请求一次** —— 否则会每 260ms 再请求一次、画布来回弹。
+  //   ③ **只有「框体自己动了 / 换了选中框体」才请求**（frameKey 变了）—— 用户平移画布是想看别处，
+  //      这时候动画布就是橡皮筋，他往左拖、画布把他拽回来。平移时面板照旧跟着框体走，
+  //      越界就让它越界（框体都出画布了，面板当然也跟着出去）。
+  //   ④ **框体已经不在画布里时不请求**（见上面的 frameOnScreen）—— 同上，别抢用户的视图。
+  const requestRoomRef = useRef(onRequestRoom);
+  requestRoomRef.current = onRequestRoom;
+  const requestedRoomRef = useRef('');
+  const frameKey = `${node.id}:${Math.round(node.position.x)}:${Math.round(node.position.y)}`;
+  const lastFrameKeyRef = useRef(null);
+  useEffect(() => {
+    if (!requestRoomRef.current || !box.width) return undefined;
+    // 手势中（平移画布 / 拖框体）既不请求、也不消费 frameMoved：等松手后带着新位置再算一次。
+    // 拖框体期间不能动画布，否则框体会在用户手底下被挪走。
+    if (viewportBusy || node.dragging) return undefined;
+    const frameMoved = lastFrameKeyRef.current !== frameKey;
+    lastFrameKeyRef.current = frameKey;
+    if (!roomX && !roomY) { requestedRoomRef.current = ''; return undefined; }
+    if (!frameMoved) return undefined;
+    const key = `${roomX}:${roomY}`;
+    if (requestedRoomRef.current === key) return undefined;
+    const timer = window.setTimeout(() => {
+      requestedRoomRef.current = key;
+      requestRoomRef.current({ x: roomX, y: roomY });
+    }, 260);
+    return () => window.clearTimeout(timer);
+  }, [roomX, roomY, viewportBusy, frameKey, node.dragging, box.width]);
+
+  // 首帧还没量到容器尺寸时先别画，免得面板在左上角闪一下。
+  const ready = box.width > 0;
+
+  return <div
+    ref={panelRef}
+    className="learning-canvas__panel"
+    style={{ width: panelWidth, transform: `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`, visibility: ready ? undefined : 'hidden' }}
+  >
+    <div className="learning-canvas__beam is-active">
+      <NodeEditPanel node={node} onRequestMaterials={onRequestMaterials} boxModalities={boxModalities} />
+      <span className="learning-canvas__beam-bloom" aria-hidden="true" />
+    </div>
+  </div>;
+}
+
+const nodeTypes = { prompt: PromptNode, image: ImageNode, character: CharacterNode, scene: SceneNode, video: VideoNode, note: NoteNode, audio: AudioNode, animation: AnimationNode };
+
+function CanvasSurface({ initialSnapshot, readOnly, onChange, onGenerateNode, beforeGenerate = null, onUploadFiles, onRequestMaterials, resolveAssetUrl = null, showStarter, capabilities = ['text'], allowNodeCreation = true, focusRequest = null, boxModalities = [], entranceRequest = null, placementRef = null }) {
+  // 受控课堂画布（allowNodeCreation=false）默认不使用固定起始底稿，避免空画布每次刷新被自动填充。
+  const shouldShowStarter = showStarter === undefined ? (!readOnly && allowNodeCreation) : showStarter;
+  const initial = useMemo(() => {
+    const restored = safeSnapshot(initialSnapshot);
+    return restored.nodes.length || !shouldShowStarter ? restored : createStarterSnapshot();
+  }, [initialSnapshot, shouldShowStarter]);
+  // 这份快照里有没有存过视角：有就照它显示，没有（新画布）才自动适配一次。
+  // 起始底稿（createStarterSnapshot）自带视角，也算存过。
+  const hasStoredViewport = useMemo(() => {
+    const source = Array.isArray(initialSnapshot?.nodes) && initialSnapshot.nodes.length ? initialSnapshot : initial;
+    const zoom = Number(source?.viewport?.zoom);
+    return Number.isFinite(zoom) && zoom > 0;
+  }, [initial, initialSnapshot]);
+  const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
+  const [viewport, setViewport] = useState(initial.viewport);
+  // 用户是否正在平移/缩放画布：① 面板在这段时间里不夹取、严格跟随框体；
+  // ② 这段时间里面板的「让位」请求必须停手（否则拖画布时会被顶一下）
+  const [viewportBusy, setViewportBusy] = useState(false);
+  const [zoomMenu, setZoomMenu] = useState(false);
+  const [contextMenu, setContextMenu] = useState(null);
+  // 底部面板要编辑哪个框体：优先当前选中的，取消选中后沿用上一次（面板不会突然消失）
+  const [activeNodeId, setActiveNodeId] = useState(null);
+  // setFlowViewport 是 ReactFlow 的命令式视口设置；本组件自己还有一个同名 state（viewport），故改名区分
+  const { getViewport, setViewport: setFlowViewport, screenToFlowPosition, setCenter, fitView, zoomIn, zoomOut, zoomTo } = useReactFlow();
+  // 当前缩放倍数（工具栏那个百分比读数）。用 store 订阅而不是 viewport state：
+  // 后者只在 onMoveEnd 更新，滚轮缩放时读数会明显滞后。
+  const zoom = useStore((state) => state.transform[2]);
+  // 缩放菜单点外面就关掉（否则它会一直挂在那儿）。
+  // 菜单自己 mousedown 要 stopPropagation，不然点菜单项会先被这里关掉、onClick 就不触发了。
+  useEffect(() => {
+    if (!zoomMenu) return undefined;
+    const close = () => setZoomMenu(false);
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [zoomMenu]);
+  // 面板在框体下方放不下时，把它需要的空间量（像素）换成一个画布上移：内容上移 → 下面腾出位置。
+  // ⚠️ 这段必须放在 useReactFlow() 解构**之后**：依赖数组里的 getViewport 是立即求值的，
+  // 放前面会踩 TDZ（ReferenceError → 整页白屏；本轮踩过一次）。
+  const requestRoom = useCallback((deficit) => {
+    const { x, y, zoom } = getViewport();
+    // deficit 是「画布要挪多少」（+x 向右、+y 向下），由面板按自身越界量算好。
+    setFlowViewport({ x: x + Number(deficit?.x || 0), y: y + Number(deficit?.y || 0), zoom });
+  }, [getViewport]);
+  const selectedNodeId = (nodes.find((item) => item.selected) || {}).id || null;
+  useEffect(() => { if (selectedNodeId) setActiveNodeId(selectedNodeId); }, [selectedNodeId]);
+  const activeNode = nodes.find((item) => item.id === activeNodeId) || null;
+  const enabledCapabilities = useMemo(() => new Set(Array.isArray(capabilities) && capabilities.length ? capabilities : ['text']), [capabilities]);
+  const canvasRef = useRef(null);
+  // 侧栏新节点按当前实际视口中心落点；只读实时 viewport，不触碰已有节点的 focusRequest。
+  useEffect(() => {
+    if (!placementRef) return undefined;
+    placementRef.current = (type, offset = 0) => {
+      const bounds = canvasRef.current?.getBoundingClientRect();
+      if (!bounds?.width || !bounds?.height) return null;
+      const currentViewport = getViewport();
+      const center = screenToFlowPosition({ x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 });
+      const width = type === 'prompt' || type === 'note' ? 320 : type === 'audio' ? 260 : 226;
+      const height = type === 'prompt' ? 170 : 160;
+      return {
+        position: { x: center.x - width / 2 + offset * 36, y: center.y - height / 2 + offset * 26 },
+        viewport: currentViewport,
+      };
+    };
+    return () => { placementRef.current = null; };
+  }, [getViewport, placementRef, screenToFlowPosition]);
+  // 只读查看：**按容器适配视野**，而不是照搬快照里存的那个视角。
+  // 为什么（2026-09-27 用户报「网页端学生看『我的作品』画布没法看」，手机上截图为证）：
+  //   快照里的 viewport 是**当时那台设备**的 {x,y,zoom}（多半是桌面大屏录的）。照搬到手机上等于
+  //   "从一个桌面坐标的窗口往里看" —— 屏幕中部一大块深色，内容只在右边露出一条。原来 `fitView` 又
+  //   只在"这份快照没存过视角"时才跑，而真实快照都存过 → 这条路上**永远不适配**。
+  // 两条纪律：
+  //   · **编辑态不动**（学生平移/缩放后的视角不能被刷新冲掉，那是 2026-09-17 的既有口径）；
+  //   · 只读态里**用户自己拖过/缩放过之后就不再抢**（换屏/转屏才需要重新适配），
+  //     判据用真实手势事件（wheel / pointerdown），不去猜 ReactFlow 的 onMoveStart（程序化移动也会触发它）。
+  useEffect(() => {
+    if (!readOnly) return undefined;
+    const element = canvasRef.current;
+    if (!element) return undefined;
+    let touched = false;
+    const markTouched = () => { touched = true; };
+    const refit = () => {
+      if (touched) return;
+      const rect = element.getBoundingClientRect();
+      if (!rect.width || !rect.height) return; // 还没布局出尺寸就先不动（否则会算出个畸形视野）
+      fitView({ padding: CANVAS_READONLY_FIT_PADDING, duration: 0, maxZoom: 1.2 });
+    };
+    // 下一帧再适配：容器宽度得等布局落定（手机上地址栏伸缩也会走这里）。
+    const frame = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(refit) : null;
+    element.addEventListener('wheel', markTouched, { passive: true });
+    element.addEventListener('pointerdown', markTouched);
+    let observer = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(refit);
+      observer.observe(element);
+    } else {
+      window.addEventListener('resize', refit);
+    }
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      element.removeEventListener('wheel', markTouched);
+      element.removeEventListener('pointerdown', markTouched);
+      if (observer) observer.disconnect();
+      else window.removeEventListener('resize', refit);
+    };
+  }, [readOnly, fitView]);
+  const historyRef = useRef({ past: [], future: [] });
+  const clipboardRef = useRef([]);
+  const restoringHistoryRef = useRef(false);
+  // 拖框体/拖缩放手柄是连续事件（每帧都来一次），只有整段手势记一条历史，
+  // 否则一次拖动会攒下几十条记录，撤销只能一点点往回退。
+  const gestureRef = useRef(null);
+  // 连续输入同一段文字合并成一条历史（键名列表见 COALESCED_EDIT_KEYS）。
+  const lastEditRef = useRef({ nodeId: null, at: 0 });
+
+  const pushHistory = useCallback((snapshot) => {
+    if (readOnly || restoringHistoryRef.current) return;
+    historyRef.current = { past: [...historyRef.current.past.slice(-49), safeSnapshot(snapshot)], future: [] };
+  }, [readOnly]);
+
+  const updateNode = useCallback((nodeId, changes) => {
+    if (readOnly) return;
+    const keys = Object.keys(changes);
+    const now = Date.now();
+    const typing = keys.length > 0 && keys.every((key) => COALESCED_EDIT_KEYS.has(key));
+    const merge = typing && lastEditRef.current.nodeId === nodeId && now - lastEditRef.current.at < 700;
+    if (!merge) pushHistory({ nodes, edges, viewport });
+    lastEditRef.current = { nodeId, at: now };
+    setNodes((current) => current.map((node) => node.id === nodeId ? { ...node, data: { ...node.data, ...changes } } : node));
+  }, [edges, nodes, pushHistory, readOnly, setNodes, viewport]);
+
+  const generateNode = useCallback(async (nodeId, modality, input) => {
+    if (readOnly || !onGenerateNode) return;
+    // 2026-10-31：生成前确认（画布内部弹窗）。确认在把节点改成「生成中」之前，
+    // 学生点取消时画布什么都不变（不会闪一下 PENDING、也不会留下失败状态）。
+    if (beforeGenerate) {
+      let confirmed = false;
+      try { confirmed = await beforeGenerate({ nodeId, modality, input }); } catch { confirmed = false; }
+      if (!confirmed) return;
+    }
+    // 记下开始时间：框体里的百分比用它算（估算进度，见 GeneratingState 的注释）
+    updateNode(nodeId, { generationStatus: 'PENDING', generationError: '', generationStartedAt: Date.now() });
+    try {
+      // 生成框体：把框体 id 一起提交，服务端据此取该框体自己的模型与参数，并保证每个框体只生成一次。
+      const boxId = (nodes || []).find((node) => node.id === nodeId)?.data?.boxId || '';
+      const asset = await onGenerateNode({ nodeId, modality, boxId, ...input });
+      if (String(modality).toUpperCase() === 'TEXT') {
+        // 文字结果写进 generatedText，保留学生自己写的提示词
+        updateNode(nodeId, { generatedText: String(asset?.metadata?.text || asset?.text || ''), generationStatus: null, generationError: '', generationStartedAt: null });
+      } else {
+        updateNode(nodeId, { assetUrl: asset.assetUrl, previewUrl: asset.previewUrl, generationStatus: null, generationError: '', generationStartedAt: null });
+      }
+    } catch (error) {
+      updateNode(nodeId, { generationStatus: 'FAILED', generationError: error instanceof Error ? error.message : 'AI生成失败' });
+    }
+  }, [beforeGenerate, nodes, onGenerateNode, readOnly, updateNode]);
+
+  // 取连到该节点的图片素材地址，供图生视频当首帧。
+  // 按连线顺序取连到该节点的图片素材地址：第一条当首帧，第二条当尾帧（首尾帧模型用）。
+  const getIncomingImageAssetUrls = useCallback((nodeId) => {
+    const sourceIds = (edges || []).filter((edge) => edge.target === nodeId).map((edge) => edge.source);
+    return sourceIds
+      .map((sourceId) => (nodes || []).find((node) => node.id === sourceId && node.type === 'image'))
+      .map((imageNode) => String(imageNode?.data?.assetUrl || imageNode?.data?.previewUrl || '').trim())
+      .filter(Boolean);
+  }, [edges, nodes]);
+
+  // 全能参考要按类型区分：图片/视频/音频节点连过来的素材各算一类。
+  // nodeId = 素材来自哪个节点 —— 面板上的「× 删除这个参考」要靠它找到那条连线。
+  const getIncomingAssetRefs = useCallback((nodeId) => {
+    const sourceIds = (edges || []).filter((edge) => edge.target === nodeId).map((edge) => edge.source);
+    return sourceIds
+      .map((sourceId) => (nodes || []).find((node) => node.id === sourceId))
+      .map((node) => {
+        const type = NODE_ASSET_KIND[node?.type] || '';
+        const url = String(node?.data?.assetUrl || node?.data?.previewUrl || '').trim();
+        return type && url ? { type, url, nodeId: node.id } : null;
+      })
+      .filter(Boolean);
+  }, [edges, nodes]);
+  const getIncomingImageRefs = useCallback((nodeId) => getIncomingAssetRefs(nodeId).filter((asset) => asset.type === 'IMAGE'), [getIncomingAssetRefs]);
+
+  /**
+   * 连线闸门：按**目标框体锁定的生成方式**限制（用户 2026-09-21 口径：
+   * 「课包的课程选择的是文生视频，那么就无法连线。图生视频就只能连 1 张图片，类似这样的判定要有」）。
+   *
+   * ⚠️ 没锁方式的框体维持原样（只挡自连）——别把默认情形也管死（旧课包没配过这个字段）。
+   * 上限与服务端同一套数（图片 9 / 视频 3 / 音频 3，见 aiGeneration 的 REFERENCE_LIMITS）。
+   */
+  const canConnect = useCallback((connection) => {
+    if (!connection || connection.source === connection.target) return false;
+    const target = (nodes || []).find((node) => node.id === connection.target);
+    const mode = String(target?.data?.inputMode || '').toUpperCase();
+    if (!mode) return true;
+    const limits = { FIRST_FRAME: { IMAGE: 1, VIDEO: 0, AUDIO: 0 }, FIRST_LAST_FRAME: { IMAGE: 2, VIDEO: 0, AUDIO: 0 }, OMNI_REFERENCE: { IMAGE: 9, VIDEO: 3, AUDIO: 3 }, IMAGE_REFERENCE: { IMAGE: 9, VIDEO: 0, AUDIO: 0 }, TEXT: { IMAGE: 0, VIDEO: 0, AUDIO: 0 } };
+    const limit = limits[mode];
+    if (!limit) return true;
+    const source = (nodes || []).find((node) => node.id === connection.source);
+    const kind = NODE_ASSET_KIND[source?.type] || '';
+    // 算上"这次要连的那条"：同类现有条数 + 1 ≤ 上限
+    const existing = getIncomingAssetRefs(connection.target).filter((asset) => asset.type === kind).length;
+    if (!kind) return false;                       // 认不出类型的节点（角色/场景/便签）不进框体
+    return existing + 1 <= (limit[kind] ?? 0);
+  }, [getIncomingAssetRefs, nodes]);
+  // ⚠️ removeIncomingRef 必须定义在 removeEdge 之后：deps 数组是立即求值的，写前面会踩 TDZ
+  //    （ReferenceError → 整页白屏；本轮又踩了一次，见第五节第 31 条）。
+  const addNodeAt = useCallback((type, position) => {
+    if (readOnly || !allowNodeCreation) return;
+    const capabilityByType = { prompt: 'text', image: 'image', video: 'video' };
+    const requiredCapability = capabilityByType[type];
+    const audioEnabled = enabledCapabilities.has('music');
+    if ((requiredCapability && !enabledCapabilities.has(requiredCapability)) || (type === 'audio' && !audioEnabled)) return;
+    const templates = {
+      prompt: { title: 'AI 文字提示词', text: '' },
+      image: { title: 'AI 生图', emoji: '✨', caption: '' },
+      video: { title: 'AI 生视频', text: '' },
+      audio: { title: 'AI 音频', text: '' },
+      character: { title: '故事角色', emoji: '🧒', name: '', trait: '' },
+      scene: { title: '故事场景', emoji: '🌲', place: '', mood: '' },
+    };
+    pushHistory({ nodes, edges, viewport });
+    setNodes((current) => [...current, { id: id(type), type, position, data: templates[type] || { title: '画布节点', text: '' } }]);
+    setContextMenu(null);
+  }, [edges, enabledCapabilities, nodes, pushHistory, readOnly, allowNodeCreation, setNodes, viewport]);
+
+  const handlePaneContextMenu = useCallback((event) => {
+    if (readOnly || !allowNodeCreation) return;
+    event.preventDefault();
+    setContextMenu({ x: event.clientX, y: event.clientY, position: screenToFlowPosition({ x: event.clientX, y: event.clientY }) });
+  }, [readOnly, allowNodeCreation, screenToFlowPosition]);
+
+  // 删掉一条连线（学生连错了能自己取消，不会定死）
+  const removeEdge = useCallback((edgeId) => {
+    if (readOnly) return;
+    pushHistory({ nodes, edges, viewport });
+    setEdges((current) => current.filter((edge) => edge.id !== edgeId));
+  }, [edges, nodes, pushHistory, readOnly, setEdges, viewport]);
+
+  // 面板上点参考缩略图右上角的 ×：删掉「素材节点 → 本框体」的那条连线
+  const removeIncomingRef = useCallback((nodeId, sourceNodeId) => {
+    if (readOnly) return;
+    const edge = (edges || []).find((item) => item.target === nodeId && item.source === sourceNodeId);
+    if (edge) removeEdge(edge.id);
+  }, [edges, readOnly, removeEdge]);
+
+  // 学生从框体两侧的圆点拖一条线到另一个框体：落点是哪个圆点就记哪个，
+  // 这样反向连（从右边的框体往左连）也能连出正确的走向。
+  const onConnect = useCallback((connection) => {
+    if (readOnly) return;
+    const sourceHandle = connection.sourceHandle || 'right';
+    const targetHandle = connection.targetHandle || 'left';
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    const wanted = edgePortPairKey(connection.source, sourceHandle, connection.target, targetHandle);
+    const duplicated = edges.some((edge) => {
+      const sides = resolvePortSides(edge, nodeById);
+      return edgePortPairKey(edge.source, sides.sourceHandle, edge.target, sides.targetHandle) === wanted;
+    });
+    if (duplicated) return;
+    pushHistory({ nodes, edges, viewport });
+    setEdges((current) => addEdge({ ...connection, id: id('edge'), sourceHandle, targetHandle }, current));
+  }, [edges, nodes, pushHistory, readOnly, setEdges, viewport]);
+
+  const onDrop = useCallback((event) => {
+    event.preventDefault();
+    if (readOnly) return;
+    // ⚠️ 2026-09-26 全站审计：`screenToFlowPosition` **内部已经减过一次**容器左上角
+    //    （@xyflow/react 的实现：`clientPosition.x - domNode.getBoundingClientRect().x`），
+    //    这里再减一次 bounds.left/top 就是减两遍 → 拖进来的素材**落点偏左上**
+    //    （学生画布左侧还有 250px 侧栏，偏得更多）。按官方约定：直接交客户端坐标。
+    const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+    // 从桌面拖进来的图片/视频/音频：交给上层（它持有快照，负责先落「上传中」的框体、再上传、
+    // 再把同一个节点补成真素材 —— 见 canvasWorkspace.uploadFiles）。
+    // ⚠️ 不要在这里 setNodes 落占位框体：那是本组件的局部状态，上层不知道，快照一刷新就把它冲掉了。
+    // 学生画布也允许，不受 allowNodeCreation 限制。
+    const files = [...(event.dataTransfer?.files || [])];
+    if (files.length && onUploadFiles) { onUploadFiles(files, position); return; }
+    if (!allowNodeCreation) return;
+    const raw = event.dataTransfer.getData('application/x-learning-material');
+    if (!raw) return;
+    let material;
+    try { material = JSON.parse(raw); } catch { return; }
+    const snapshot = material?.snapshot && typeof material.snapshot === 'object' ? material.snapshot : {};
+    const sourceData = snapshot.data || snapshot.props || {};
+    const materialType = String(material?.materialType || snapshot.type || 'NOTE').toUpperCase();
+    const type = snapshot.type || ({ IMAGE: 'image', VIDEO: 'video', AUDIO: 'audio', MUSIC: 'audio', ANIMATION: 'animation', CHARACTER: 'character', SCENE: 'scene', TEXT: 'prompt', PROMPT: 'prompt' }[materialType] || 'note');
+    const fallbackData = type === 'image' ? { title: material.title, emoji: '✨', caption: material.description || '' } : type === 'video' ? { title: material.title, text: material.description || '' } : type === 'audio' ? { title: material.title, text: material.description || '', assetUrl: material.assetUrl, previewUrl: material.previewUrl } : type === 'animation' ? { title: material.title, text: material.description || '', assetUrl: material.assetUrl, previewUrl: material.previewUrl } : type === 'character' ? { title: material.title, emoji: '🧒', name: '', trait: material.description || '' } : type === 'scene' ? { title: material.title, emoji: '🌲', place: material.description || '', mood: '' } : { title: material.title, text: material.description || '' };
+    pushHistory({ nodes, edges, viewport });
+    setNodes((current) => [...current, { id: `material-${Date.now().toString(36)}`, type, position, data: { ...fallbackData, ...sourceData, title: material.title || sourceData.title, lessonMaterialId: material.id, isLessonMaterial: true } }]);
+  }, [edges, nodes, onUploadFiles, pushHistory, readOnly, allowNodeCreation, screenToFlowPosition, setNodes, viewport]);
+
+  const handleNodesChange = useCallback((changes) => {
+    if (!readOnly && changes.some((change) => change.type !== 'select')) {
+      if (changes.some((change) => change.type === 'position' || change.type === 'dimensions')) {
+        // 拖动/缩放：手势开始时留一份底稿，手一松开才记一条历史。
+        if (changes.some((change) => change.dragging || change.resizing)) {
+          if (!gestureRef.current) gestureRef.current = safeSnapshot({ nodes, edges, viewport });
+        } else if (gestureRef.current) {
+          pushHistory(gestureRef.current);
+          gestureRef.current = null;
+        }
+      } else {
+        pushHistory({ nodes, edges, viewport });
+      }
+    }
+    onNodesChange(changes);
+  }, [edges, nodes, onNodesChange, pushHistory, readOnly, viewport]);
+
+  const handleEdgesChange = useCallback((changes) => {
+    if (!readOnly && changes.some((change) => change.type !== 'select')) pushHistory({ nodes, edges, viewport });
+    onEdgesChange(changes);
+  }, [edges, nodes, onEdgesChange, pushHistory, readOnly, viewport]);
+
+  const undo = useCallback(() => {
+    const past = historyRef.current.past;
+    if (readOnly || !past.length) return;
+    const previous = past[past.length - 1];
+    historyRef.current = { past: past.slice(0, -1), future: [safeSnapshot({ nodes, edges, viewport }), ...historyRef.current.future].slice(0, 50) };
+    lastEditRef.current = { nodeId: null, at: 0 };
+    restoringHistoryRef.current = true;
+    setNodes(previous.nodes); setEdges(previous.edges); setViewport(previous.viewport);
+    window.setTimeout(() => { restoringHistoryRef.current = false; }, 0);
+  }, [edges, nodes, readOnly, setEdges, setNodes, viewport]);
+
+  const redo = useCallback(() => {
+    const future = historyRef.current.future;
+    if (readOnly || !future.length) return;
+    const next = future[0];
+    historyRef.current = { past: [...historyRef.current.past, safeSnapshot({ nodes, edges, viewport })].slice(-50), future: future.slice(1) };
+    lastEditRef.current = { nodeId: null, at: 0 };
+    restoringHistoryRef.current = true;
+    setNodes(next.nodes); setEdges(next.edges); setViewport(next.viewport);
+    window.setTimeout(() => { restoringHistoryRef.current = false; }, 0);
+  }, [edges, nodes, readOnly, setEdges, setNodes, viewport]);
+
+  useEffect(() => {
+    if (readOnly) return undefined;
+    const handleKeyDown = (event) => {
+      const target = event.target;
+      if (target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); event.shiftKey ? redo() : undo(); return; }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'y') { event.preventDefault(); redo(); return; }
+      // ⚠️ 复制/粘贴**只在"能自由建节点"的画布上给**（学生画布 allowNodeCreation=false 一律没有）：
+      //    框体是课时配置的、每个只能成功生成一次，复制出来的框体**共用同一个 boxId** ——
+      //    生成必被服务端拒（「该生成框体已经生成过了」），还会让「这个框体是不是已经在画布上」的判断错乱。
+      //    用户 2026-09-21：「我现在可以用快捷键复制框体，这个应该要禁用掉」。
+      //    位置很关键：撤销/重做在上面两行，**不受这条影响**（学生要能撤销）。
+      if (!allowNodeCreation) return;
+      // 即便能自由建节点，**框体也不复制**（同一个 boxId 两个节点没有意义）。
+      const copyable = (node) => !node.data?.boxId;
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'c') {
+        const selected = nodes.filter((node) => node.selected && copyable(node));
+        if (selected.length) { clipboardRef.current = selected.map((node) => ({ ...node, selected: false, data: { ...node.data } })); event.preventDefault(); }
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'v' && clipboardRef.current.length) {
+        event.preventDefault(); pushHistory({ nodes, edges, viewport });
+        const pasted = clipboardRef.current.map((node, index) => ({ ...node, id: id(node.type), position: { x: node.position.x + 40 + index * 18, y: node.position.y + 40 + index * 18 }, selected: false, data: { ...node.data } }));
+        setNodes((current) => [...current.map((node) => ({ ...node, selected: false })), ...pasted]);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [allowNodeCreation, edges, nodes, pushHistory, readOnly, redo, setNodes, undo, viewport]);
+
+  useEffect(() => {
+    if (!contextMenu) return undefined;
+    const close = () => setContextMenu(null);
+    window.addEventListener('click', close);
+    window.addEventListener('keydown', close);
+    return () => { window.removeEventListener('click', close); window.removeEventListener('keydown', close); };
+  }, [contextMenu]);
+
+  // 素材面板点「已在画布上」的框体时，把对应节点选中并移到视野中央（点了要看得见反应）。
+  useEffect(() => {
+    if (!focusRequest?.id) return;
+    const node = nodes.find((item) => item.id === focusRequest.id);
+    if (!node) return;
+    const width = node.measured?.width || node.width || 250;
+    const height = node.measured?.height || node.height || 160;
+    setNodes((current) => current.map((item) => ({ ...item, selected: item.id === focusRequest.id })));
+    setCenter(node.position.x + width / 2, node.position.y + height / 2, { zoom: Math.max(getViewport().zoom || 1, 0.8), duration: 400 });
+    // 只在每次新的定位请求（token 变化）时执行
+  }, [focusRequest?.token]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    onChange?.({ nodes, edges, viewport: getViewport() });
+  }, [edges, getViewport, nodes, onChange, viewport]);
+
+  // 两侧连接点上线后，连线必须指明从哪一个圆点出入。历史快照里的连线没有 handle 字段，
+  // 这里按左右位置补上（只影响渲染，不写回数据，免得把老画布白白标记成「有未保存改动」）。
+  const displayEdges = useMemo(() => {
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    return edges.map((edge) => {
+      const base = edge.markerEnd ? { ...edge, markerEnd: undefined } : edge;
+      if (base.sourceHandle && base.targetHandle) return base;
+      return { ...base, ...resolvePortSides(edge, nodeById) };
+    });
+  }, [edges, nodes]);
+  // 入口样式只投影给 React Flow，原始 nodes / onChange / 自动保存均不包含这个临时类。
+  const displayNodes = useMemo(() => nodes.map((node) => node.id === entranceRequest?.id
+    ? { ...node, className: `${node.className || ''} is-entering`.trim() }
+    : node), [entranceRequest?.id, nodes]);
+
+  return <AssetUrlContext.Provider value={resolveAssetUrl}><CanvasActionsContext.Provider value={{ updateNode, generateNode, canGenerate: Boolean(onGenerateNode), removeEdge, removeIncomingRef, readOnly, enabledCapabilities, getIncomingImageAssetUrls, getIncomingImageRefs, getIncomingAssetRefs }}>
+    <div className={`learning-canvas${readOnly ? ' is-readonly' : ''}`} ref={canvasRef}>
+      <ReactFlow
+        nodes={displayNodes}
+        edges={displayEdges}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        onNodesChange={readOnly ? undefined : handleNodesChange}
+        onEdgesChange={readOnly ? undefined : handleEdgesChange}
+        onConnect={onConnect}
+        // Loose 模式：两个圆点既能起线也能接收，学生从哪一侧拖都能连上（不会自动连接）
+        connectionMode={ConnectionMode.Loose}
+        connectionRadius={28}
+        // 只认「按住圆点拖到另一个圆点」，单击不会起线（避免学生误点就多一条连线）
+        connectOnClick={false}
+        connectionLineStyle={{ stroke: 'var(--cv-primary)', strokeWidth: 2.2, strokeLinecap: 'round' }}
+        isValidConnection={readOnly ? undefined : canConnect}
+        onDrop={onDrop}
+        onPaneContextMenu={handlePaneContextMenu}
+        // 点空白处 = 取消选择：react-flow 自己会 resetSelectedElements（选中框的高亮它管），
+        // 但**底部编辑面板是我们自己的状态**，不清就会一直挂在那儿 ——
+        // 学生看到的就是「点了空白没反应」（用户 2026-09-17 报的第 1 条）。
+        onPaneClick={() => { setContextMenu(null); setActiveNodeId(null); }}
+        onDragOver={(event) => event.preventDefault()}
+        onMoveStart={() => setViewportBusy(true)}
+        onMoveEnd={() => { setViewport(getViewport()); setViewportBusy(false); }}
+        // 编辑态：只有「这份快照还没存过视角」时才自动适配视野；存过就用存下来的视角。
+        // 原来无条件写 fitView，于是每次刷新都会重新适配 —— 学生平移/缩放后的视角全丢（用户反馈「刷新全复原」）。
+        // 只读态：**一律适配**（存过也适配）—— 见上面那个 refit effect 里的口径注释，
+        // 照搬桌面录的视角正是"手机上没法看"的根因。
+        fitView={readOnly ? true : !hasStoredViewport}
+        // 初始视野：内容靠上、下面留出输入面板的位置。
+        // fitView 默认把内容**垂直居中**，而面板贴在被选中框体下方、高 160~320px，
+        // 居中时框体下面最多只有 (画布高 - 框体高)/2 的空间——框体长一点面板就必然压住它。
+        // 分边 padding 用 px（数字会被当成比例，不是像素），下边固定留 320px。
+        // 只读态没有那块面板，所以换成四边 20px 的那份（CANVAS_READONLY_FIT_PADDING）。
+        fitViewOptions={{ padding: readOnly ? CANVAS_READONLY_FIT_PADDING : CANVAS_FIT_PADDING, maxZoom: 1.2 }}
+        nodesDraggable={!readOnly}
+        nodesConnectable={!readOnly}
+        elementsSelectable={!readOnly}
+        deleteKeyCode={readOnly ? null : ['Backspace', 'Delete']}
+        // 框体的删除规则（2026-09-19 用户口径「优化微调一下」）：
+        //   · **没生成过**的框体**可以删** —— 学生误加的、还空着的那种，原来一律删不掉、白占画布；
+        //     删掉后素材面板那条会回到「未生成」，再点一下就又回来了（课时配额一点没动）。
+        //   · **生成过 / 正在生成**的框体**不给删** —— 那一次配额已经用掉了，留着才对得上；
+        //     否则会出现「面板显示已生成、画布上却没有」。
+        // 判据与节点状态的算法保持一致（见 ImageNode 里 state 的推导：PENDING / assetUrl / generatedText）。
+        onBeforeDelete={readOnly ? undefined : async ({ nodes: deletingNodes, edges: deletingEdges }) => {
+          // 判据在 boxRules.js 里（纯函数，守卫 p122 直接拿状态矩阵跑它 —— 别在这里重写一份）
+          const protectedIds = new Set((deletingNodes || []).filter(isProtectedBoxNode).map((node) => node.id));
+          if (!protectedIds.size) return true;
+          return {
+            nodes: (deletingNodes || []).filter((node) => !protectedIds.has(node.id)),
+            edges: (deletingEdges || []).filter((edge) => !protectedIds.has(edge.source) && !protectedIds.has(edge.target)),
+          };
+        }}
+        minZoom={readOnly ? CANVAS_READONLY_MIN_ZOOM : CANVAS_MIN_ZOOM}
+        maxZoom={CANVAS_MAX_ZOOM}
+        defaultViewport={initial.viewport}
+      >
+        <Background color="#7e8ed8" gap={24} size={1} />
+        <MiniMap pannable zoomable className="learning-canvas__minimap" />
+        {/* ReactFlow 自带的这个「适合屏幕」按钮：只读态也要用**不含底部面板留白**的那份 padding，
+            否则等于把内容压进上半截（那个 320px 是给编辑态输入面板留的）。 */}
+        <Controls showInteractive={false} fitViewOptions={{ padding: readOnly ? CANVAS_READONLY_FIT_PADDING : CANVAS_FIT_PADDING, maxZoom: 1.2 }} />
+      </ReactFlow>
+      {!readOnly && activeNode ? <CanvasDockPanel node={activeNode} containerRef={canvasRef} viewportBusy={viewportBusy} onRequestRoom={requestRoom} onRequestMaterials={onRequestMaterials} boxModalities={boxModalities} /> : null}
+      {!readOnly && <div className="learning-canvas__toolbar">
+        <button type="button" className="learning-canvas__toolbar-btn" title="撤销（Ctrl+Z）" aria-label="撤销" onClick={undo}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 7L4 12l5 5M4 12h9a6 6 0 0 1 6 6"/></svg></button>
+        <button type="button" className="learning-canvas__toolbar-btn" title="重做（Ctrl+Y）" aria-label="重做" onClick={redo}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 7l5 5-5 5M20 12h-9a6 6 0 0 0-6 6"/></svg></button>
+        <span className="learning-canvas__toolbar-sep" />
+        <button type="button" className="learning-canvas__toolbar-btn" title="适配视图" aria-label="适配视图" onClick={() => fitView({ padding: CANVAS_FIT_PADDING, duration: 320, maxZoom: 1.2 })}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 9V5h4M20 9V5h-4M4 15v4h4M20 15v4h-4"/></svg></button>
+        <span className="learning-canvas__toolbar-sep" />
+        {/* 缩放：− 百分比 ＋，点百分比出档位（50% / 100% / 800%）。
+            学生要放大看素材细节，而以前上限只有 180%（用户 2026-09-17 报「放大最多就放大这么多了」）。 */}
+        <div className="learning-canvas__zoom">
+          <button type="button" className="learning-canvas__toolbar-btn" title="缩小" aria-label="缩小" onClick={() => { setZoomMenu(false); zoomOut({ duration: 160 }); }}>−</button>
+          <button type="button" className="learning-canvas__toolbar-btn is-zoom-readout" title="缩放（50% / 100% / 800%）" aria-label={`当前缩放 ${Math.round(zoom * 100)}%`} aria-expanded={zoomMenu} onClick={() => setZoomMenu((open) => !open)}>{Math.round(zoom * 100)}%</button>
+          <button type="button" className="learning-canvas__toolbar-btn" title="放大" aria-label="放大" onClick={() => { setZoomMenu(false); zoomIn({ duration: 160 }); }}>＋</button>
+          {zoomMenu ? <div className="learning-canvas__zoom-menu" role="menu" onMouseDown={(event) => event.stopPropagation()}>
+            <button type="button" role="menuitem" onClick={() => { setZoomMenu(false); zoomIn({ duration: 160 }); }}>放大<span>＋</span></button>
+            <button type="button" role="menuitem" onClick={() => { setZoomMenu(false); zoomOut({ duration: 160 }); }}>缩小<span>−</span></button>
+            <button type="button" role="menuitem" onClick={() => { setZoomMenu(false); fitView({ padding: CANVAS_FIT_PADDING, duration: 320, maxZoom: 1.2 }); }}>适合屏幕</button>
+            {CANVAS_ZOOM_STEPS.map((step) => <button key={step} type="button" role="menuitem" onClick={() => { setZoomMenu(false); zoomTo(step, { duration: 220 }); }}>缩放至 {Math.round(step * 100)}%</button>)}
+          </div> : null}
+        </div>
+      </div>}
+      {/* 学生那侧**不再显示底部提示条**（用户 2026-09-17 口径：这处文案删掉，给画布留空间）。
+          它原来还写着「从左侧『素材』面板添加框体」—— 那个「素材」大类本轮已经取消，留着也是错的。
+          能自由建节点的画布（机构端/老师）照旧保留提示。 */}
+      {/* 只读查看（公开作品页 / 学生自己详情 / 平台端与机构端预览 / 老师看学生作品）里**不该出现**这句 ——
+          只读态根本拖不动框体、也没有 ＋ 可拖，写着只会让人以为能编辑（2026-09-27 看只读页截图时发现）。 */}
+      {allowNodeCreation && !readOnly ? <div className="learning-canvas__tip">拖动卡片排布；从卡片两侧的 ＋ 拖一条线连到另一个框体。</div> : null}
+      {contextMenu && allowNodeCreation && <div className="learning-canvas__context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>
+        <strong>创建节点</strong>
+        <button type="button" onClick={() => addNodeAt('prompt', contextMenu.position)} disabled={!enabledCapabilities.has('text')}>✎ AI 文字</button>
+        <button type="button" onClick={() => addNodeAt('image', contextMenu.position)} disabled={!enabledCapabilities.has('image')}>✦ AI 生图{!enabledCapabilities.has('image') && <small>本课未开放</small>}</button>
+        <button type="button" onClick={() => addNodeAt('video', contextMenu.position)} disabled={!enabledCapabilities.has('video')}>▶ AI 生视频{!enabledCapabilities.has('video') && <small>本课未开放</small>}</button>
+        <button type="button" onClick={() => addNodeAt('audio', contextMenu.position)} disabled={!(enabledCapabilities.has('music'))}>♫ AI 音频{!(enabledCapabilities.has('music')) && <small>本课未开放</small>}</button>
+        <button type="button" onClick={() => addNodeAt('character', contextMenu.position)}>♙ 角色节点</button>
+        <button type="button" onClick={() => addNodeAt('scene', contextMenu.position)}>⌂ 场景节点</button>
+      </div>}
+    </div>
+  </CanvasActionsContext.Provider></AssetUrlContext.Provider>;
+}
+
+export function CanvasEditor(props) {
+  return <ReactFlowProvider><CanvasSurface {...props} /></ReactFlowProvider>;
+}

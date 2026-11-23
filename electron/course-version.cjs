@@ -1,0 +1,65 @@
+const {randomUUID} = require("node:crypto");
+function text(value, label, limit = 300) {
+  if (typeof value !== 'string' || !value.trim() || value.length > limit) throw new Error(`请检查${label}`);
+  return value.trim();
+}
+function validSteps(steps) {
+  if (!Array.isArray(steps) || steps.length > 60) throw new Error('课程简介最多 60 项');
+  const ids = new Set();
+  return steps.map(step => {
+    const id = text(step.id, '步骤编号', 90);
+    if (ids.has(id)) throw new Error('步骤编号重复');
+    ids.add(id);
+    return { id, title: text(step.title, '步骤标题'), description: text(step.description, '步骤说明', 3000), deliverable: text(step.deliverable, '阶段成果') };
+  });
+}
+function deliveryModes(modes) {
+  if (!Array.isArray(modes) || !modes.length || new Set(modes).size !== modes.length || modes.some(mode => !['CANVAS','VIBECODING'].includes(mode))) throw new Error('请选择有效的课程工作区');
+  return modes;
+}
+
+function modelPolicy(items = []) {
+  if (!Array.isArray(items) || items.length > 4) throw Error('请检查画布模型设置');
+  const modalities = new Set();
+  return items.map(({modality,modelId}) => {
+    if (!['TEXT','IMAGE','VIDEO','AUDIO'].includes(modality) || modalities.has(modality)) throw Error('每种创作类型只能指定一个模型');
+    modalities.add(modality);
+    return {modality,modelId:text(modelId,'模型编号',120)};
+  });
+}
+function buildCourseVersion(draft, base = {}) {
+  const id = base.id || randomUUID();
+  const steps = validSteps(draft.steps ?? []);
+  const modes = deliveryModes(draft.permittedDeliveryModes ?? [draft.type]);
+  const type = modes[0];
+  if (!Number.isSafeInteger(draft.price) || draft.price < 0 || draft.price > 1000000) throw new Error('请输入有效的积分价格');
+  const title = text(draft.title,'课程标题',120);
+  const models = modes.includes('CANVAS') ? modelPolicy(draft.modelPolicy ?? base.modelPolicy) : [];
+  const ids = modes.includes('VIBECODING') ? (draft.vibeModelIds ?? base.vibeModelIds ?? []) : [];
+  if (!Array.isArray(ids) || ids.length > 30) throw Error('请检查 VibeCoding 模型清单');
+  const vibeModelIds = [...new Set(ids.map(id => text(id,'模型编号',120)))];
+  const course = { ...base, id, versionId: randomUUID(), title, subtitle: text(draft.subtitle,'课程简介',1000), type, category: base.category || '创作实训', level: base.level || '入门',
+    unlockPricePoints: draft.price, learningObjectives: steps.length ? [steps.at(-1).deliverable] : [], modelPolicy: models, vibeModelIds, modelLabels: [...new Set([...models.map(item => item.modelId), ...vibeModelIds])], assets: base.assets || [],
+    steps, previewSteps: steps.map(s => s.title), permittedDeliveryModes: modes };
+  const materialGroups = modes.includes('CANVAS') ? draft.materialGroups ?? base.materialGroups ?? [] : [];
+  const snapshot = modes.includes('CANVAS') ? draft.canvasSnapshot ?? base.canvasSnapshot ?? {nodes:[],edges:[]} : {nodes:[],edges:[]};
+  if (!Array.isArray(snapshot.nodes) || !Array.isArray(snapshot.edges) || !Array.isArray(materialGroups) || materialGroups.length > 60) throw Error('画布编排格式不正确');
+  const identifiers = new Set();
+  const unique = value => {const id=text(value,'素材编号',128);if(identifiers.has(id)) throw Error('分组或素材编号重复');identifiers.add(id);return id;};
+  for (const group of materialGroups) {
+    unique(group.id);text(group.title,'分组名称');
+    if (!Array.isArray(group.materials) || group.materials.length > 100) throw Error('分组素材格式不正确');
+    for (const material of group.materials) {
+      unique(material.id);text(material.title,'素材名称');
+      if (!['IMAGE','VIDEO','AUDIO','PROMPT','GENERATION_BOX'].includes(material.materialType)) throw Error('不支持的素材类型');
+      if (material.materialType === 'GENERATION_BOX' && !['TEXT','IMAGE','VIDEO','AUDIO','MUSIC'].includes(material.snapshot?.box?.modality)) throw Error('请指定框体类型');
+      if (material.materialType === 'PROMPT') text(material.snapshot?.content || material.description,'画布提示词',12000);
+    }
+  }
+  const prompts = modes.includes('VIBECODING') ? (draft.classroomConfig ?? base.classroomConfig)?.vibeCoding?.presetPrompts ?? [] : [];
+  if (!Array.isArray(prompts) || prompts.length > 100) throw Error('请检查提示词预设');
+  course.classroomConfig={vibeCoding:{presetPrompts:prompts.map(prompt=>({title:text(prompt.title,'预设名称'),text:text(prompt.text,'预设正文',12000)}))}};
+  course.materialGroups=materialGroups;course.canvasSnapshot=snapshot;
+  return course;
+}
+module.exports = {buildCourseVersion, deliveryModes};

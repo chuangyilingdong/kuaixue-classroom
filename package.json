@@ -1,0 +1,86 @@
+{
+  "name": "kuaixue-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=11.25.0"
+  },
+  "type": "module",
+  "description": "Standalone desktop client for Kuaixue AI courses",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "cross-env KUAIXUE_API_PORT=4175 VITE_KUAIXUE_API_BASE_URL=http://127.0.0.1:4175 concurrently -k \"node apps/api/server.mjs\" \"vite --host 127.0.0.1\" \"wait-on tcp:4175 tcp:5173 && cross-env KUAIXUE_DEV_URL=http://127.0.0.1:5173 electron .\"",
+    "dev:api": "cross-env KUAIXUE_API_PORT=4175 node apps/api/server.mjs",
+    "dev:web": "cross-env VITE_KUAIXUE_API_BASE_URL=http://127.0.0.1:4175 vite --host 127.0.0.1",
+    "build": "vite build",
+    "package:win:dir": "pnpm build && electron-builder --win --dir",
+    "package:win": "pnpm build && electron-builder --win nsis",
+    "test": "node --test",
+    "start": "electron .",
+    "course:images": "powershell -NoProfile -STA -ExecutionPolicy Bypass -File scripts/select-course-images.ps1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "@xyflow/react": "12.11.5",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "41.0.3",
+    "electron-builder": "^26.18.0",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vite": "^6.4.1",
+    "wait-on": "^8.0.3"
+  },
+  "build": {
+    "appId": "com.kuaixue.classroom",
+    "productName": "快学课堂",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json",
+      "data/course-catalog.demo.json",
+      "integrations/vibecoding/*.mjs"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "快学课堂",
+      "deleteAppDataOnUninstall": false
+    },
+    "artifactName": "Kuaixue-${version}-${arch}.${ext}",
+    "extraResources": [
+      {
+        "from": "release/vibe-local-runtime",
+        "to": "vibe-local-runtime",
+        "filter": [
+          "**/*",
+          "!**/*.map"
+        ]
+      },
+      {
+        "from": "release/vibe-course-web",
+        "to": "vibe-course-web",
+        "filter": [
+          "**/*",
+          "!**/*.map"
+        ]
+      }
+    ]
+  }
+}

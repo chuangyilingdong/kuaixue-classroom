@@ -1,0 +1,688 @@
+[
+  {
+    "id": "storyboard-to-film",
+    "thumbnailUrl": "./course-media/spring-cover.webp",
+    "purchaseCount": 268,
+    "galleryImages": [
+      {
+        "url": "./course-media/spring-boards.webp",
+        "alt": "彩色分镜示例"
+      },
+      {
+        "url": "./course-media/spring-cover.webp",
+        "alt": "角色表情与逆光构图"
+      },
+      {
+        "url": "./course-media/spring-forest.webp",
+        "alt": "森林场景中的角色与光影"
+      }
+    ],
+    "introImages": [
+      {
+        "url": "./course-media/spring-boards.webp",
+        "alt": "从关键画面到连续镜头 · 彩色分镜示例"
+      }
+    ],
+    "mediaCredit": "画面示例取自《Spring》，© Blender Studio · CC BY 4.0。已裁切并转换格式。",
+    "versionId": "demo-storyboard-v1",
+    "title": "从故事到分镜短片",
+    "subtitle": "用一张角色设定，完成一支连贯的短片分镜",
+    "type": "CANVAS",
+    "category": "影像创作",
+    "level": "入门",
+    "durationMinutes": 45,
+    "unlockPricePoints": 120,
+    "modelLabels": [
+      "图像生成",
+      "视频生成"
+    ],
+    "previewSteps": [
+      "整理故事梗概",
+      "建立角色设定",
+      "生成关键画面",
+      "编排分镜",
+      "导出作品"
+    ],
+    "learningObjectives": [
+      "把故事梗概拆解为可视化镜头",
+      "保持角色设定与镜头画面的一致性",
+      "整理并导出完整分镜作品"
+    ],
+    "steps": [
+      {
+        "id": "outline",
+        "title": "整理故事梗概",
+        "description": "提炼主题、人物关系与关键转折，形成便于视觉表达的简短大纲。",
+        "deliverable": "故事梗概"
+      },
+      {
+        "id": "character",
+        "title": "建立角色设定",
+        "description": "明确角色外观、服饰、性格和画面风格，作为后续生成的统一参考。",
+        "deliverable": "角色设定图"
+      },
+      {
+        "id": "keyframes",
+        "title": "生成关键画面",
+        "description": "围绕主要情节生成关键场景，并检查角色和整体色彩是否连贯。",
+        "deliverable": "关键画面"
+      },
+      {
+        "id": "storyboard",
+        "title": "编排分镜",
+        "description": "按叙事顺序安排镜头景别、画面内容和衔接关系。",
+        "deliverable": "分镜序列"
+      },
+      {
+        "id": "export",
+        "title": "导出作品",
+        "description": "检查分镜顺序与画面完整性，整理为便于分享和继续编辑的作品。",
+        "deliverable": "分镜作品"
+      }
+    ],
+    "assets": [],
+    "permittedDeliveryModes": [
+      "CANVAS"
+    ],
+    "visualTone": "coral",
+    "icon": "film",
+    "bannerUrl": "./course-media/spring-cover-banner.webp",
+    "coverFocus": {
+      "x": 61,
+      "y": 45
+    },
+    "materialGroups": [
+      {
+        "id": "storyboard-to-film-group",
+        "title": "分镜素材",
+        "materials": [
+          {
+            "id": "storyboard-to-film-box",
+            "title": "故事文本",
+            "materialType": "GENERATION_BOX",
+            "snapshot": {
+              "box": {
+                "modality": "TEXT"
+              }
+            }
+          },
+          {
+            "id": "storyboard-to-film-prompt",
+            "title": "镜头提示",
+            "materialType": "PROMPT",
+            "snapshot": {
+              "content": "用近景描述主角的表情，再切到远景交代场景。"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "brand-visual-system",
+    "thumbnailUrl": "./course-media/brand.webp",
+    "purchaseCount": 174,
+    "versionId": "demo-brand-v1",
+    "title": "搭建品牌视觉系统",
+    "subtitle": "从灵感板开始，做出统一的品牌主视觉和应用图",
+    "type": "CANVAS",
+    "category": "视觉设计",
+    "level": "入门",
+    "durationMinutes": 35,
+    "unlockPricePoints": 80,
+    "modelLabels": [
+      "图像生成",
+      "图像编辑"
+    ],
+    "previewSteps": [
+      "明确品牌关键词",
+      "收集视觉参考",
+      "生成主视觉",
+      "扩展应用场景"
+    ],
+    "learningObjectives": [
+      "将品牌定位转化为清晰的视觉关键词",
+      "建立可复用的品牌主视觉方向",
+      "将主视觉延展至不同应用场景"
+    ],
+    "steps": [
+      {
+        "id": "keywords",
+        "title": "明确品牌关键词",
+        "description": "梳理品牌受众、气质和差异点，筛选能指导视觉创作的关键词。",
+        "deliverable": "品牌关键词"
+      },
+      {
+        "id": "references",
+        "title": "收集视觉参考",
+        "description": "围绕关键词整理色彩、字体、构图和材质参考，形成灵感板。",
+        "deliverable": "视觉灵感板"
+      },
+      {
+        "id": "key-visual",
+        "title": "生成主视觉",
+        "description": "组合品牌关键词与参考方向，生成并筛选符合定位的主视觉。",
+        "deliverable": "品牌主视觉"
+      },
+      {
+        "id": "applications",
+        "title": "扩展应用场景",
+        "description": "保持主视觉规则一致，将设计延展到典型品牌触点。",
+        "deliverable": "应用场景图"
+      }
+    ],
+    "assets": [],
+    "permittedDeliveryModes": [
+      "CANVAS"
+    ],
+    "visualTone": "lime",
+    "icon": "shapes",
+    "bannerUrl": "./course-media/brand-banner.webp",
+    "coverFocus": {
+      "x": 70,
+      "y": 50
+    },
+    "galleryImages": [
+      {
+        "url": "./course-media/brand-work.webp",
+        "alt": "主视觉在名片与海报上的应用"
+      },
+      {
+        "url": "./course-media/brand.webp",
+        "alt": "搭建品牌视觉系统 · 设计素材"
+      }
+    ],
+    "materialGroups": [
+      {
+        "id": "brand-visual-system-group",
+        "title": "品牌素材",
+        "materials": [
+          {
+            "id": "brand-visual-system-box",
+            "title": "品牌创意",
+            "materialType": "GENERATION_BOX",
+            "snapshot": {
+              "box": {
+                "modality": "TEXT"
+              }
+            }
+          },
+          {
+            "id": "brand-visual-system-prompt",
+            "title": "品牌定位",
+            "materialType": "PROMPT",
+            "snapshot": {
+              "content": "用三句话描述品牌面向的人、希望传达的印象和主要色彩。"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "creative-coding-studio",
+    "thumbnailUrl": "./course-media/code.webp",
+    "purchaseCount": 213,
+    "versionId": "demo-code-v1",
+    "title": "做一个自己的灵感网站",
+    "subtitle": "从空文件夹出发，用自然语言搭建并迭代一个网页",
+    "type": "VIBECODING",
+    "category": "VibeCoding",
+    "level": "零基础",
+    "durationMinutes": 60,
+    "unlockPricePoints": 160,
+    "modelLabels": [
+      "代码助手"
+    ],
+    "previewSteps": [
+      "描述网站想法",
+      "搭出页面结构",
+      "调整视觉样式",
+      "预览并发布"
+    ],
+    "learningObjectives": [
+      "将自然语言想法拆解为网页需求",
+      "通过逐步迭代搭建并调整页面",
+      "在本地预览并整理可运行的网站项目"
+    ],
+    "steps": [
+      {
+        "id": "idea",
+        "title": "描述网站想法",
+        "description": "说明网站面向谁、要解决什么问题，以及最重要的页面内容。",
+        "deliverable": "页面需求说明"
+      },
+      {
+        "id": "structure",
+        "title": "搭出页面结构",
+        "description": "先实现主要区块和基础交互，再检查页面信息是否容易理解。",
+        "deliverable": "可运行的页面骨架"
+      },
+      {
+        "id": "style",
+        "title": "调整视觉样式",
+        "description": "根据目标氛围调整排版、颜色和间距，并在不同窗口尺寸下检查。",
+        "deliverable": "页面视觉方案"
+      },
+      {
+        "id": "preview",
+        "title": "预览并发布",
+        "description": "运行项目、检查主要流程，整理文件和发布所需说明。",
+        "deliverable": "网站项目"
+      }
+    ],
+    "assets": [],
+    "permittedDeliveryModes": [
+      "VIBECODING"
+    ],
+    "visualTone": "blue",
+    "icon": "code",
+    "bannerUrl": "./course-media/code-banner.webp",
+    "coverFocus": {
+      "x": 46,
+      "y": 50
+    },
+    "galleryImages": [
+      {
+        "url": "./course-media/code-work.webp",
+        "alt": "灵感作品集首页"
+      },
+      {
+        "url": "./course-media/code.webp",
+        "alt": "做一个自己的灵感网站 · 设计素材"
+      }
+    ],
+    "classroomConfig": {
+      "vibeCoding": {
+        "presetPrompts": [
+          {
+            "title": "首页起稿",
+            "text": "帮我制作一个陈列三个灵感作品的个人首页。先问我想采用什么风格。"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "product-photo-lab",
+    "thumbnailUrl": "./course-media/product.webp",
+    "purchaseCount": 119,
+    "versionId": "demo-photo-v1",
+    "title": "制作一组电商产品图",
+    "subtitle": "用参考图和提示词，产出多场景产品视觉素材",
+    "type": "CANVAS",
+    "category": "商业视觉",
+    "level": "入门",
+    "durationMinutes": 30,
+    "unlockPricePoints": 60,
+    "modelLabels": [
+      "图像生成",
+      "图像编辑"
+    ],
+    "previewSteps": [
+      "准备产品参考",
+      "选择拍摄风格",
+      "生成场景图",
+      "精修并导出"
+    ],
+    "learningObjectives": [
+      "准备能体现产品特征的参考素材",
+      "用统一风格生成多个产品场景",
+      "完成基础筛选与视觉整理"
+    ],
+    "steps": [
+      {
+        "id": "reference",
+        "title": "准备产品参考",
+        "description": "选择清晰的产品图，确认外观、材质和不可改变的产品细节。",
+        "deliverable": "产品参考素材"
+      },
+      {
+        "id": "style",
+        "title": "选择拍摄风格",
+        "description": "确定场景、光线和构图方向，建立适用于整组图片的风格基准。",
+        "deliverable": "拍摄风格说明"
+      },
+      {
+        "id": "scenes",
+        "title": "生成场景图",
+        "description": "根据商品用途生成多种场景，并逐张检查主体和细节是否准确。",
+        "deliverable": "产品场景图"
+      },
+      {
+        "id": "finish",
+        "title": "精修并导出",
+        "description": "挑选合适画面，修正明显问题并按用途整理输出。",
+        "deliverable": "电商产品图"
+      }
+    ],
+    "assets": [],
+    "permittedDeliveryModes": [
+      "CANVAS"
+    ],
+    "visualTone": "violet",
+    "icon": "box",
+    "bannerUrl": "./course-media/product-banner.webp",
+    "coverFocus": {
+      "x": 63,
+      "y": 50
+    },
+    "galleryImages": [
+      {
+        "url": "./course-media/product-work.webp",
+        "alt": "产品主图、细节与场景组图"
+      },
+      {
+        "url": "./course-media/product.webp",
+        "alt": "制作一组电商产品图 · 设计素材"
+      }
+    ],
+    "materialGroups": [
+      {
+        "id": "product-photo-lab-group",
+        "title": "产品素材",
+        "materials": [
+          {
+            "id": "product-photo-lab-box",
+            "title": "拍摄脚本",
+            "materialType": "GENERATION_BOX",
+            "snapshot": {
+              "box": {
+                "modality": "TEXT"
+              }
+            }
+          },
+          {
+            "id": "product-photo-lab-prompt",
+            "title": "拍摄提示",
+            "materialType": "PROMPT",
+            "snapshot": {
+              "content": "围绕产品的材质、光线与背景写一段拍摄说明。"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "interactive-story",
+    "thumbnailUrl": "./course-media/spring-concept.webp",
+    "purchaseCount": 96,
+    "mediaCredit": "画面示例取自《Spring》，© Blender Studio · CC BY 4.0。已裁切并转换格式。",
+    "versionId": "demo-story-v1",
+    "title": "创作一个互动故事原型",
+    "subtitle": "把故事分支变成可点击、可分享的互动体验",
+    "type": "VIBECODING",
+    "category": "创意编程",
+    "level": "进阶",
+    "durationMinutes": 50,
+    "unlockPricePoints": 140,
+    "modelLabels": [
+      "代码助手"
+    ],
+    "previewSteps": [
+      "拆解故事分支",
+      "生成互动页面",
+      "加入选择反馈",
+      "测试体验"
+    ],
+    "learningObjectives": [
+      "把故事节点整理为清晰的分支结构",
+      "实现可点击的选择与反馈",
+      "检查不同选择路径下的体验"
+    ],
+    "steps": [
+      {
+        "id": "branches",
+        "title": "拆解故事分支",
+        "description": "列出故事节点、用户选择和对应结果，避免出现无法继续的路径。",
+        "deliverable": "故事分支图"
+      },
+      {
+        "id": "page",
+        "title": "生成互动页面",
+        "description": "将主要节点搭建成页面内容，并提供清楚的选择入口。",
+        "deliverable": "互动页面"
+      },
+      {
+        "id": "feedback",
+        "title": "加入选择反馈",
+        "description": "让每次选择都能触发对应内容，并保留必要的返回或重选方式。",
+        "deliverable": "可交互故事流程"
+      },
+      {
+        "id": "test",
+        "title": "测试体验",
+        "description": "逐条走查故事路径，检查内容连贯性、交互状态和边界情况。",
+        "deliverable": "可体验的故事原型"
+      }
+    ],
+    "assets": [],
+    "permittedDeliveryModes": [
+      "VIBECODING"
+    ],
+    "visualTone": "yellow",
+    "icon": "sparkles",
+    "bannerUrl": "./course-media/spring-concept-banner.webp",
+    "coverFocus": {
+      "x": 70,
+      "y": 50
+    },
+    "galleryImages": [
+      {
+        "url": "./course-media/spring-concept-work.webp",
+        "alt": "互动场景与两条故事分支"
+      },
+      {
+        "url": "./course-media/spring-concept.webp",
+        "alt": "创作一个互动故事原型 · 设计素材"
+      }
+    ],
+    "classroomConfig": {
+      "vibeCoding": {
+        "presetPrompts": [
+          {
+            "title": "故事分支",
+            "text": "和我一起设计一个两种结局的互动故事。先问我主角是谁。"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "visual-notes",
+    "thumbnailUrl": "./course-media/notes.webp",
+    "purchaseCount": 152,
+    "versionId": "demo-notes-v1",
+    "title": "把知识整理成视觉笔记",
+    "subtitle": "将复杂主题拆解成结构清晰的图解与卡片",
+    "type": "CANVAS",
+    "category": "视觉设计",
+    "level": "入门",
+    "durationMinutes": 25,
+    "unlockPricePoints": 40,
+    "modelLabels": [
+      "图像生成"
+    ],
+    "previewSteps": [
+      "提炼核心观点",
+      "选择图解结构",
+      "生成视觉草稿",
+      "整理并分享"
+    ],
+    "learningObjectives": [
+      "从资料中提取主题和关键观点",
+      "选择适合内容逻辑的图解结构",
+      "制作便于阅读与分享的视觉笔记"
+    ],
+    "steps": [
+      {
+        "id": "insights",
+        "title": "提炼核心观点",
+        "description": "归纳主题结论和支撑信息，区分主次，删去重复内容。",
+        "deliverable": "观点提纲"
+      },
+      {
+        "id": "structure",
+        "title": "选择图解结构",
+        "description": "根据内容关系选择流程、对比、层级或其他合适的表达结构。",
+        "deliverable": "图解结构草案"
+      },
+      {
+        "id": "draft",
+        "title": "生成视觉草稿",
+        "description": "安排标题、节点和视觉重点，生成可供检查和调整的初稿。",
+        "deliverable": "视觉笔记草稿"
+      },
+      {
+        "id": "share",
+        "title": "整理并分享",
+        "description": "核对文字与阅读顺序，整理为清晰、易读的分享版本。",
+        "deliverable": "视觉笔记"
+      }
+    ],
+    "assets": [],
+    "permittedDeliveryModes": [
+      "CANVAS"
+    ],
+    "visualTone": "mint",
+    "icon": "book",
+    "bannerUrl": "./course-media/notes-banner.webp",
+    "coverFocus": {
+      "x": 45,
+      "y": 50
+    },
+    "galleryImages": [
+      {
+        "url": "./course-media/notes-work.webp",
+        "alt": "从观察到整理的视觉笔记"
+      },
+      {
+        "url": "./course-media/notes.webp",
+        "alt": "把知识整理成视觉笔记 · 设计素材"
+      }
+    ],
+    "materialGroups": [
+      {
+        "id": "visual-notes-group",
+        "title": "笔记素材",
+        "materials": [
+          {
+            "id": "visual-notes-box",
+            "title": "笔记草稿",
+            "materialType": "GENERATION_BOX",
+            "snapshot": {
+              "box": {
+                "modality": "TEXT"
+              }
+            }
+          },
+          {
+            "id": "visual-notes-prompt",
+            "title": "梳理要点",
+            "materialType": "PROMPT",
+            "snapshot": {
+              "content": "把主题拆分为三个要点，每个要点保留一个具体例子。"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "story-to-interactive-page",
+    "thumbnailUrl": "./course-media/spring-concept.webp",
+    "purchaseCount": null,
+    "mediaCredit": "画面示例取自《Spring》，© Blender Studio · CC BY 4.0。已裁切并转换格式。",
+    "versionId": "demo-story-interactive-v1",
+    "title": "从故事分镜到互动网页",
+    "subtitle": "先在学院画布编排分镜，再用 VibeCoding 制作可阅读的互动页面",
+    "type": "CANVAS",
+    "category": "创意编程",
+    "level": "进阶",
+    "durationMinutes": 50,
+    "unlockPricePoints": 100,
+    "modelLabels": [
+      "代码助手"
+    ],
+    "previewSteps": [
+      "编排故事分镜",
+      "制作互动页面"
+    ],
+    "learningObjectives": [
+      "制作分镜，并将分镜编排成互动页面"
+    ],
+    "steps": [
+      {
+        "id": "board",
+        "title": "编排故事分镜",
+        "description": "在学院画布写出开场、转折和结局，并连起三个镜头。",
+        "deliverable": "故事分镜图"
+      },
+      {
+        "id": "page",
+        "title": "制作互动页面",
+        "description": "进入 VibeCoding，将三个镜头写成三个页面段落。",
+        "deliverable": "互动故事页面"
+      }
+    ],
+    "assets": [],
+    "permittedDeliveryModes": [
+      "CANVAS",
+      "VIBECODING"
+    ],
+    "visualTone": "yellow",
+    "icon": "sparkles",
+    "bannerUrl": "./course-media/spring-concept-banner.webp",
+    "coverFocus": {
+      "x": 70,
+      "y": 50
+    },
+    "galleryImages": [
+      {
+        "url": "./course-media/spring-concept-work.webp",
+        "alt": "互动场景与两条故事分支"
+      },
+      {
+        "url": "./course-media/spring-concept.webp",
+        "alt": "创作一个互动故事原型 · 设计素材"
+      }
+    ],
+    "materialGroups": [
+      {
+        "id": "story-to-interactive-page-group",
+        "title": "故事分镜",
+        "materials": [
+          {
+            "id": "story-to-interactive-page-box",
+            "title": "镜头草稿",
+            "materialType": "GENERATION_BOX",
+            "snapshot": {
+              "box": {
+                "modality": "TEXT"
+              }
+            }
+          },
+          {
+            "id": "story-to-interactive-page-prompt",
+            "title": "分镜起稿",
+            "materialType": "PROMPT",
+            "snapshot": {
+              "content": "用三个镜头呈现主角的选择：开场、转折、结局。"
+            }
+          }
+        ]
+      }
+    ],
+    "classroomConfig": {
+      "vibeCoding": {
+        "presetPrompts": [
+          {
+            "title": "互动故事页面",
+            "text": "根据我的三个分镜制作一个互动故事网页。先和我确认两个分支的选择，再编写首页。"
+          }
+        ]
+      }
+    }
+  }
+]

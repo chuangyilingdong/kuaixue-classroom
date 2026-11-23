@@ -1,0 +1,125 @@
+.cv-shell {
+  --cv-bg: #101012;
+  --cv-surface: #151515;
+  --cv-surface-2: #1c1c21;
+  --cv-card: #202027;
+  --cv-border: #2a292e;
+  --cv-border-strong: #393842;
+  --cv-text: #f4f4f5;
+  --cv-text-dim: #b7b6be;
+  --cv-text-faint: #777780;
+  --cv-primary: #a3fe44;
+  --cv-primary-fg: #102000;
+  --cv-motion: 200ms;
+  --cv-font: 'Geist', 'Noto Sans SC', ui-sans-serif, -apple-system, 'Segoe UI Variable Text', 'Segoe UI', system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+.cv-shell { font-family: var(--cv-font); display: flex; flex-direction: column; height: 100vh; overflow: hidden; color: var(--cv-text); background: var(--cv-bg); }
+
+/* 顶栏：左品牌 / 中课时 / 右上两个动作 */
+.cv-topbar { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 14px; height: 52px; padding: 0 14px; border-bottom: 1px solid var(--cv-border); background: var(--cv-bg); }
+/* 顶栏左上角：品牌标（灵动ai 横标，按高度缩放）+ **右边**的学生账号名。
+   原来是「✦ 灵动ai学院 / 学生创作画布」那个占位块；用户 2026-09-17 先要 logo + 名字，
+   再调成「名字放 logo 右边、白色、格式『同学：xxx』」（放下面太挤、灰字不够显眼）。 */
+.cv-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.cv-brand__logo { display: block; height: 22px; width: auto; }
+.cv-brand__name { max-width: 160px; overflow: hidden; color: #fff; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.cv-toptitle { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1px; min-width: 0; }
+.cv-toptitle span { color: var(--cv-text-faint); font-size: 10px; letter-spacing: .04em; }
+.cv-toptitle strong { max-width: 46vw; overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+/* 顶栏的算力池提示：与课时名并列，一眼看到「本课包还剩多少」 */
+.cv-pool { flex: 0 0 auto; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--cv-accent, #6d5efc) 14%, transparent); color: var(--cv-text-soft, #6b6f7b); font-size: 10px; font-style: normal; letter-spacing: .02em; white-space: nowrap; }
+.cv-pool.is-low { background: color-mix(in srgb, #d9534f 16%, transparent); color: #b23b36; }
+.cv-actions { display: flex; align-items: center; gap: 8px; }
+.cv-btn { height: 34px; padding: 0 14px; border: 1px solid var(--cv-border-strong); border-radius: 999px; color: #e8e8eb; background: var(--cv-surface-2); font-size: 12px; font-weight: 600; cursor: pointer; transition: background var(--cv-motion) ease-out, color var(--cv-motion) ease-out, filter var(--cv-motion) ease-out, opacity var(--cv-motion) ease-out; }
+.cv-btn:hover:not(:disabled) { background: #26262e; color: #fff; }
+.cv-btn--primary { border-color: transparent; color: var(--cv-primary-fg); background: var(--cv-primary); }
+.cv-btn--primary:hover:not(:disabled) { background: var(--cv-primary); color: var(--cv-primary-fg); filter: brightness(1.07); }
+.cv-btn:disabled { opacity: .35; cursor: not-allowed; }
+
+/* 主区：左侧栏 + 画布 */
+.cv-layout { flex: 1; display: flex; min-height: 0; }
+.cv-sidebar { display: flex; flex-direction: column; width: 250px; flex: 0 0 auto; overflow: hidden; border-right: 1px solid var(--cv-border); background: rgb(21 21 21 / 95%); backdrop-filter: blur(14px); transition: width var(--cv-motion) ease-out; }
+.cv-sidebar.is-collapsed { width: 48px; }
+.cv-sidebar__head { display: flex; align-items: center; justify-content: space-between; height: 48px; flex: 0 0 auto; padding: 0 12px; border-bottom: 1px solid rgb(255 255 255 / 6%); }
+.cv-sidebar.is-collapsed .cv-sidebar__head { justify-content: center; padding: 0; }
+.cv-sidebar__title { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; }
+.cv-sidebar__title i { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 6px; color: var(--cv-primary); background: rgb(163 254 68 / 12%); font-style: normal; font-size: 11px; }
+.cv-sidebar.is-collapsed .cv-sidebar__title { display: none; }
+.cv-sidebar__toggle, .cv-sidebar__close { display: grid; place-items: center; width: 26px; height: 26px; border: 0; border-radius: 8px; color: var(--cv-text-dim); background: transparent; font-size: 13px; cursor: pointer; transition: background var(--cv-motion) ease-out, color var(--cv-motion) ease-out; }
+.cv-sidebar__toggle:hover, .cv-sidebar__close:hover { color: #fff; background: rgb(255 255 255 / 8%); }
+.cv-nav { display: flex; flex: 0 0 auto; flex-direction: column; gap: 2px; padding: 6px; }
+.cv-sidebar.is-collapsed .cv-nav { padding: 6px 4px; }
+.cv-nav-item { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border: 0; border-radius: 8px; color: var(--cv-text-dim); background: transparent; font-size: 12px; cursor: pointer; text-align: left; transition: background var(--cv-motion) ease-out, color var(--cv-motion) ease-out; }
+.cv-nav-item i { display: grid; place-items: center; width: 20px; font-style: normal; font-size: 13px; }
+.cv-nav-item span { flex: 1; }
+.cv-nav-item small { color: var(--cv-text-faint); font-size: 10px; }
+.cv-nav-item:hover { color: #fff; background: rgb(255 255 255 / 6%); }
+.cv-nav-item.is-active { color: var(--cv-primary); background: rgb(163 254 68 / 12%); font-weight: 600; }
+.cv-nav-item:disabled { opacity: .35; cursor: not-allowed; }
+.cv-sidebar.is-collapsed .cv-nav-item { justify-content: center; padding: 0; }
+.cv-sidebar.is-collapsed .cv-nav-item span, .cv-sidebar.is-collapsed .cv-nav-item small { display: none; }
+.cv-panel { flex: 1; min-height: 0; overflow: auto; padding: 8px; border-top: 1px solid rgb(255 255 255 / 6%); }
+.cv-sidebar.is-collapsed .cv-panel { display: none; }
+.cv-panel__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 2px 4px 8px; }
+.cv-panel__head strong { display: block; font-size: 12px; }
+.cv-panel__head small { display: block; margin-top: 2px; color: var(--cv-text-faint); font-size: 10px; }
+.cv-group { margin-bottom: 10px; }
+.cv-group > h4 { margin: 0 0 6px; padding: 0 4px; color: var(--cv-text-faint); font-size: 10px; font-weight: 600; letter-spacing: .04em; }
+.cv-item { display: flex; align-items: center; gap: 9px; width: 100%; margin-bottom: 4px; padding: 8px 9px; border: 1px solid transparent; border-radius: 10px; color: var(--cv-text); background: rgb(255 255 255 / 3%); cursor: pointer; text-align: left; transition: background var(--cv-motion) ease-out, border-color var(--cv-motion) ease-out, opacity var(--cv-motion) ease-out; }
+.cv-item:hover:not(:disabled) { border-color: var(--cv-border-strong); background: rgb(255 255 255 / 7%); }
+.cv-item:disabled { opacity: .45; cursor: not-allowed; }
+/* 生成框体：四周一圈金色，和其他素材一眼分开（用户 2026-09-21 口径：「生成框体都需要在四周
+   有点金色的环绕，一看就知道这个是生成框体、而不是其他素材；只需要区分生成框体即可」）。
+   用 border + box-shadow 描一圈：四边都完整，悬停换色时也不会被吃掉；图标那套模态色不动
+   （生图/生视频/生音乐的区分仍然在）。 */
+.cv-item.is-gen-box { border-color: rgb(246 199 92 / 62%); box-shadow: 0 0 0 1px rgb(246 199 92 / 24%), 0 0 10px rgb(246 199 92 / 16%); }
+.cv-item.is-gen-box:hover:not(:disabled) { border-color: rgb(253 224 122 / 95%); background: rgb(246 199 92 / 10%); box-shadow: 0 0 0 1px rgb(246 199 92 / 45%), 0 0 14px rgb(246 199 92 / 26%); }
+.cv-item.is-gen-box:disabled { box-shadow: 0 0 0 1px rgb(246 199 92 / 14%); }
+.cv-item__icon { display: grid; place-items: center; width: 28px; height: 28px; flex: 0 0 auto; border-radius: 8px; color: var(--cv-primary); background: rgb(163 254 68 / 10%); font-size: 13px; }
+/* 素材类型分色：与画布上的框体同一套（.learning-node--* 的蓝 / 紫 / 粉），
+   这样「生图框体 / 生视频框体 / 生音乐框体」在列表里也是一眼分得出来。 */
+.cv-item__icon.is-image { color: #7dd3fc; background: rgb(125 211 252 / 14%); }
+.cv-item__icon.is-video { color: #c4b5fd; background: rgb(196 181 253 / 14%); }
+.cv-item__icon.is-audio { color: #f9a8d4; background: rgb(249 168 212 / 14%); }
+.cv-item__icon.is-prompt { color: var(--cv-primary); background: rgb(163 254 68 / 12%); }
+.cv-item__text { flex: 1; min-width: 0; }
+.cv-item__text strong { display: block; overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.cv-item__text small { display: block; margin-top: 2px; color: var(--cv-text-faint); font-size: 10px; line-height: 1.45; }
+.cv-item__plus { flex: 0 0 auto; color: var(--cv-text-dim); font-size: 14px; }
+.cv-empty { margin: 6px 4px; color: var(--cv-text-faint); font-size: 11px; line-height: 1.6; }
+.cv-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px; }
+.cv-chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--cv-border-strong); border-radius: 999px; color: var(--cv-text-faint); font-size: 11px; }
+.cv-chip.is-on { color: var(--cv-primary); border-color: rgb(163 254 68 / 35%); background: rgb(163 254 68 / 10%); }
+
+.cv-text-btn { padding: 4px 8px; border: 1px solid var(--cv-border-strong); border-radius: 8px; color: var(--cv-text-dim); background: transparent; font-size: 11px; cursor: pointer; transition: background var(--cv-motion) ease-out, color var(--cv-motion) ease-out; }
+.cv-text-btn:hover:not(:disabled) { color: #fff; background: rgb(255 255 255 / 8%); }
+.cv-text-btn:disabled { opacity: .35; cursor: not-allowed; }
+.cv-text-btn.is-danger:hover:not(:disabled) { color: #ffb4b4; border-color: rgb(255 107 107 / 40%); }
+
+/* 画布主区 */
+.cv-main { display: flex; flex-direction: column; gap: 10px; flex: 1; min-width: 0; min-height: 0; padding: 12px 14px 14px; }
+/* .cv-heading（「我的课堂画布」+ 作品名 + 已保存 那条横条）2026-09-17 已整条删掉：
+   两处文案按用户口径去掉、保存状态挪进顶栏，腾出一行给画布。样式一并清掉，别留死规则。 */
+.cv-save-state { flex: 0 0 auto; padding: 5px 11px; border: 1px solid var(--cv-border-strong); border-radius: 999px; color: var(--cv-text-dim); background: rgb(255 255 255 / 4%); font-size: 11px; }
+.cv-save-state.is-dirty { color: var(--cv-primary); border-color: rgb(163 254 68 / 30%); background: rgb(163 254 68 / 10%); }
+/* 自动保存失败要显眼：学生得知道「刚才的改动没写进去」（线上出现过课包被归档 → 保存接口一直 404） */
+.cv-save-state.is-error { max-width: 48ch; overflow: hidden; color: #ffb4b4; border-color: rgb(255 107 107 / 45%); background: rgb(255 107 107 / 12%); text-overflow: ellipsis; white-space: nowrap; }
+.cv-viewport { flex: 1; min-height: 0; overflow: hidden; border-radius: 20px; }
+.cv-viewport .learning-canvas { height: 100%; min-height: 0; border-radius: 20px; }
+
+/* 浮层：提示条 / 对话框 */
+.cv-toast { position: fixed; right: 18px; bottom: 18px; z-index: 60; max-width: 360px; padding: 11px 15px; border: 1px solid var(--cv-border-strong); border-radius: 12px; color: var(--cv-text); background: rgb(28 28 33 / 96%); box-shadow: 0 18px 44px rgb(0 0 0 / 40%); font-size: 12px; backdrop-filter: blur(12px); animation: cv-toast-in var(--cv-motion) ease-out; }
+.cv-toast.is-error { color: #ffc9c9; border-color: rgb(255 107 107 / 35%); }
+@keyframes cv-toast-in { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+.cv-dialog { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px; background: rgb(0 0 0 / 72%); backdrop-filter: blur(4px); }
+.cv-dialog__panel { width: min(520px, 100%); max-height: 86vh; overflow: auto; padding: 18px; border: 1px solid var(--cv-border-strong); border-radius: 16px; background: var(--cv-surface); box-shadow: 0 24px 70px rgb(0 0 0 / 50%); }
+.cv-dialog__panel > strong { display: block; font-size: 13px; }
+.cv-dialog__body { margin: 10px 0 0; color: var(--cv-text-dim); font-size: 12px; line-height: 1.7; }
+.cv-dialog__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.cv-dialog__list { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
+.cv-dialog__list button { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 13px; border: 1px solid var(--cv-border-strong); border-radius: 11px; color: var(--cv-text); background: var(--cv-surface-2); text-align: left; font-size: 12px; cursor: pointer; transition: border-color var(--cv-motion) ease-out, background var(--cv-motion) ease-out; }
+.cv-dialog__list button:hover { border-color: var(--cv-primary); background: rgb(163 254 68 / 8%); }
+.cv-dialog__list small { color: var(--cv-text-faint); font-size: 10px; }
+.cv-dialog__preview { margin: 12px 0; overflow: hidden; border: 1px solid var(--cv-border-strong); border-radius: 14px; }
+.cv-dialog__preview .learning-canvas { height: 420px; border: 0; border-radius: 0; }
+

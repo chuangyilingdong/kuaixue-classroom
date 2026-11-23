@@ -1,0 +1,13 @@
+.workshop-run {padding:48px clamp(20px,3vw,48px) 32px}.workshop-toolbar{display:flex;gap:12px;align-items:center}.workshop-toolbar>div{flex:1}.workshop-toolbar h1{margin:4px 0}.workshop-run button{padding:9px 14px;border:1px solid #62656e;border-radius:7px;color:inherit;background:transparent;cursor:pointer}.workshop-run button:disabled{opacity:.5}.workshop-layout{display:grid;grid-template-columns:minmax(220px,26%) 1fr;gap:20px}.workshop-steps{padding:16px;border:1px solid var(--line);border-radius:12px}.workshop-steps label{display:flex;align-items:flex-start;gap:9px;margin:20px 0}.workshop-steps small{display:block;margin-top:5px;opacity:.75}.workshop-editor{min-width:0}.workshop-editor textarea,.workshop-editor iframe{width:100%;min-height:230px;margin:8px 0;border-radius:7px}.workshop-editor textarea{display:block;background:#20232a;color:#f4f5f6;padding:12px;font:14px/1.6 Consolas,monospace}.workshop-editor iframe{background:white;border:0}
+.workspace-entries {display:grid;gap:8px;margin:12px 0}
+.workspace-entries strong {font-size:14px}
+.desktop[data-view="workspace"] .window-tools,.desktop[data-view="workspace"] .window-drag{display:none}
+.course-surface{height:100%;min-width:0;display:grid;grid-template-rows:32px minmax(0,1fr);overflow:hidden}
+.course-caption{display:flex;align-items:center;gap:12px;padding:0 150px 0 8px;overflow:hidden;background:var(--rail);-webkit-app-region:drag;font-size:12px}
+.course-caption button{color:inherit;background:transparent;border:0;cursor:pointer;-webkit-app-region:no-drag;white-space:nowrap}
+.course-caption span,.course-caption output{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.course-caption small{opacity:.7}
+.course-workbench,.course-surface .cv-shell{width:100%;height:100%;min-height:0;min-width:0;border:0;border-radius:0;display:block}
+.course-surface .cv-shell{display:flex}.course-surface .cv-main{padding:0}.course-surface .cv-viewport,.course-surface .cv-viewport .learning-canvas{border:0;border-radius:0}
+.workshop-editor .vibe-workbench {height:calc(100vh - 215px);min-height:430px}
+
+.vibe-local-tools {display:flex;align-items:center;gap:10px;margin-top:12px}.vibe-local-tools span{font-size:13px;color:var(--muted)}.vibe-local-tools button[aria-pressed="true"]{opacity:1;border-color:currentColor}
