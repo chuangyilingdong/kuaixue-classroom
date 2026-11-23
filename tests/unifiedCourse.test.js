@@ -154,6 +154,24 @@ test('desktop session exchange sets a secure cookie and signs out through the id
  const closed=await post('logout',{});assert.match(closed.headers.get('set-cookie'),/Max-Age=0/);assert.deepEqual(revoked,[token]);
 });
 
+test('course actions pass the authenticated session into the runtime model host',async t=>{
+  let receivedSession='';
+  const server=createApiServer({
+    allowedOrigins:['kuaixue://classroom'],
+    identity:session=>session==='session-token'?{userId:'learner',mainSiteToken:'main-token'}:null,
+    platform:{start:async(user,body,session)=>{receivedSession=session;return {id:'run-1',user,body};}},
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const response=await fetch(`http://127.0.0.1:${server.address().port}/api/v1/course-runs/open`,{
+    method:'POST',
+    headers:{'Content-Type':'application/json',Origin:'kuaixue://classroom',Cookie:'kuaixue_session=session-token'},
+    body:JSON.stringify({courseId:'course',versionId:'version',mode:'VIBECODING'}),
+  });
+  assert.equal(response.status,200);
+  assert.equal(receivedSession,'session-token');
+});
+
 
 test('Vibe host only writes provider credentials for the current entitled course version',async t => {
   const {provisionCourseProvider} = await import('../integrations/vibecoding/course-provider.mjs');

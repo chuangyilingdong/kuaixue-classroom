@@ -2,7 +2,8 @@ import {CourseProblem} from './course-platform.mjs';
 
 export async function sessionPrincipal(req, identity) {
   const session = /(?:^|;\s*)kuaixue_session=([^;\s]+)/.exec(req.headers.cookie || '')?.[1];
-  return session && identity ? identity(session) : null;
+  const principal = session && identity ? identity(session) : null;
+  return principal ? {...principal, session} : null;
 }
 const methods = new Map([
   ['/api/v1/course-runs/works','works'],
@@ -34,7 +35,7 @@ export async function handleCourseAction(req,res,{path,allowed,identity,platform
     if (!platform || !identity) throw new CourseProblem(503,'课程服务待接入');
     const principal = await sessionPrincipal(req,identity);
     if (!principal?.userId) throw new CourseProblem(401,'请先登录');
-    const data = await platform[method](principal.userId,await readBody(req));
+    const data = await platform[method](principal.userId,await readBody(req),principal.session);
     json(res,200,{data});
   } catch (error) {
     const known = error instanceof CourseProblem;
