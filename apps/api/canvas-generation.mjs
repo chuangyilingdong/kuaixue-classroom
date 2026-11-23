@@ -97,8 +97,8 @@ export function canvasModelRoute(job){
   const raw=providerModel(job?.modelId);
   const label=String(job?.modelLabel||'').trim();
   const labelEndpoint=label?modelEndpoint(label):'';
-  const execution=labelEndpoint!==label&&!label.includes('::')?labelEndpoint:raw;
-  const billingKey=canvasBillingAliases[raw]||(labelEndpoint!==label?labelEndpoint:modelEndpoint(raw));
+  const execution=canvasBillingAliases[raw]||(labelEndpoint!==label?labelEndpoint:modelEndpoint(raw));
+  const billingKey=execution;
   const provider=String(job?.modelId||'').split('::')[0];
   return {
     execution,billingKey,

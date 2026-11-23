@@ -76,6 +76,7 @@ test('MiniMax-H3 使用正式模型键报价并把自动画幅发送为 adaptive
     modality:'VIDEO',input:{prompt:'猴子跳起来',params:{aspectRatio:'auto',resolution:'768P',durationSeconds:5}},
   });
   assert.equal(quote.points,4);
+  assert.equal(quote.executionModelKey,'minimax/hailuo-h3/multimodal-to-video');
   assert.equal(quoteFacts.modelKey,'minimax/hailuo-h3/multimodal-to-video');
   assert.equal(quoteFacts.aspectRatio,'adaptive');
 });
@@ -84,7 +85,7 @@ test('全模态渠道模型都拆分为执行键和正式计费键',()=>{
   assert.ok(Object.keys(canvasBillingAliases).length>=52);
   for(const [model,billingKey] of Object.entries(canvasBillingAliases)){
     const route=canvasModelRoute({modelId:`aicyld-runninghub::${model}`,modelLabel:'自定义名称',modality:'IMAGE'});
-    assert.equal(route.execution,model);
+    assert.equal(route.execution,billingKey);
     assert.equal(route.billingKey,billingKey);
   }
   for(const [model,key] of [
