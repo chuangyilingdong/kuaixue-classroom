@@ -27,3 +27,9 @@ test('生成媒体提供本地下载入口',()=>{
   assert.match(canvas,/kind="video"/);
   assert.match(main,/ipcMain\.handle\('media:download'/);
 });
+
+test('缺少云端快照时继续启动本机 Vibe 工作区',()=>{
+  const run=readFileSync(new URL('../src/ui/CourseRun.jsx',import.meta.url),'utf8');
+  assert.match(run,/error\.status!==404/);
+  assert.match(run,/if\(snapshot\)await window\.kuaixueDesktop\.vibe\.restoreLocal/);
+});

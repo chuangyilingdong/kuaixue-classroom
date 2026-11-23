@@ -52,6 +52,9 @@ app.whenReady().then(async () => {
       versionId: item.versionId,
       mode: 'VIBECODING',
     });
+    const localRuntime = vibe.ok
+      ? await call(ses, 'POST', '/api/v1/course-runs/local-runtime', {id:vibe.payload.data.id})
+      : null;
 
     const boxes = (course?.materialGroups || [])
       .flatMap(group => group.materials || [])
@@ -82,6 +85,14 @@ app.whenReady().then(async () => {
       detail: {status: detail.status, courseId: course?.id || null, versionId: course?.versionId || null},
       canvasOpen: summarize(canvas),
       vibeOpen: summarize(vibe),
+      localRuntime: localRuntime ? {
+        status: localRuntime.status,
+        code: localRuntime.payload?.error?.code || null,
+        message: localRuntime.payload?.error?.message || null,
+        userId: Boolean(localRuntime.payload?.data?.userId),
+        modelCount: localRuntime.payload?.data?.modelGateway?.modelIds?.length || 0,
+        baseHost: (() => { try { return new URL(localRuntime.payload?.data?.modelGateway?.baseUrl).host; } catch { return null; } })(),
+      } : null,
       canvasHasRuntimeTicket: typeof canvas.payload?.data?.runtimeTicket === 'string',
       vibeHasRuntimeTicket: typeof vibe.payload?.data?.runtimeTicket === 'string',
       imageBoxFound: Boolean(imageBox),

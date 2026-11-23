@@ -59,9 +59,13 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
         try {
           snapshot=await courseClient.downloadSnapshot(run.id);
         } catch(error) {
-          setFrameUrl(run.frameUrl);setWorkspaceState('ready');return false;
+          if(error.status!==404) {
+            setFrameUrl(run.frameUrl);setWorkspaceState('ready');
+            setNotice(`快照恢复失败：${error.message}${run.frameUrl?'，正在尝试备用连接':''}`);
+            return false;
+          }
         }
-        await window.kuaixueDesktop.vibe.restoreLocal({
+        if(snapshot)await window.kuaixueDesktop.vibe.restoreLocal({
           userId:local.userId,courseId:run.course.id,versionId:run.course.versionId,
           bytes:snapshot.bytes,revision:snapshot.revision,sha256:snapshot.sha256,capturedAt:snapshot.capturedAt,
         });
