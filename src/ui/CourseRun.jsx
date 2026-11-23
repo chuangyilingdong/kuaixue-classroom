@@ -75,7 +75,7 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
       return true;
     } catch(error) {
       setFrameUrl(run.frameUrl);setWorkspaceState('ready');
-      if(!run.frameUrl) setNotice(`工作区启动失败：${error.message}`);
+      setNotice(`工作区启动失败：${error.message}${run.frameUrl?'，正在尝试备用连接':''}`);
       return false;
     }
   },[canvas,run,stopLocal]);

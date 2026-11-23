@@ -272,6 +272,29 @@ function mediaKindOf(mimeType) {
   return '';
 }
 
+function MediaDownloadButton({url,name,kind}) {
+  const [state,setState]=useState('idle');
+  if(!url)return null;
+  const download=async(event)=>{
+    event.stopPropagation();
+    if(state==='busy')return;
+    setState('busy');
+    try{
+      if(window.kuaixueDesktop?.downloadMedia) {
+        const result=await window.kuaixueDesktop.downloadMedia({url,name,kind});
+        setState(result?.cancelled?'idle':'done');
+      }else{
+        const link=document.createElement('a');
+        link.href=url;link.download=name||'课程素材';link.rel='noreferrer';
+        link.click();setState('done');
+      }
+    }catch{setState('error');}
+  };
+  return <button type="button" className={`learning-node__media-download nodrag is-${state}`} title={state==='error'?'下载失败，请重试':'下载到本地'} aria-label="下载到本地" onClick={download}>
+    {state==='busy'?'…':state==='done'?'✓':'↓'}
+  </button>;
+}
+
 // 把素材地址解析成「能直接显示」的地址。非 /api/ 地址（生成结果的外链等）原样返回。
 function useDisplayUrl(raw) {
   const resolve = useContext(AssetUrlContext);
@@ -505,7 +528,7 @@ function NodeFrame({ icon, tone, title, children, selected, aspectRatio = '', va
     return <>
       {ports}
       <div className={`learning-node learning-node--${tone} learning-node--media${processing ? ' is-processing' : ''}`} style={aspectRatioVars(aspectRatio)}>
-        <div className="learning-node__caption"><span className="learning-node__caption-icon">{icon}</span>{titleNode}</div>
+        <div className="learning-node__caption"><span className="learning-node__caption-icon">{icon}</span>{titleNode}{headingExtra}</div>
         {children}
       </div>
     </>;
@@ -711,7 +734,10 @@ function SlotParamPickers({ id, data }) {
   if (readOnly || !data.slotType || !options) return null;
   const student = data.studentParams || {};
   const rows = [];
-  if (!data.aspectRatio && Array.isArray(options.aspectRatios) && options.aspectRatios.length) rows.push({ key: 'aspectRatio', label: '画幅', ratio: true, items: options.aspectRatios.map((value) => ({ value, label: value })) });
+  if (!data.aspectRatio && Array.isArray(options.aspectRatios) && options.aspectRatios.length) {
+    const ratios=options.aspectRatios.filter(value=>String(value).toLowerCase()!=='adaptive');
+    if(ratios.length)rows.push({ key: 'aspectRatio', label: '画幅', ratio: true, items: ratios.map((value) => ({ value, label: value })) });
+  }
   if (!data.resolution && Array.isArray(options.resolutions) && options.resolutions.length) rows.push({ key: 'resolution', label: '清晰度', items: options.resolutions.map((value) => ({ value, label: value })) });
   const durationOpen = data.slotType === 'video' && (data.durationSeconds === null || data.durationSeconds === undefined);
   if (durationOpen && Array.isArray(options.durations) && options.durations.length) rows.push({ key: 'durationSeconds', label: '时长', items: options.durations.map((value) => ({ value: String(value), label: `${value} 秒` })) });
@@ -772,7 +798,8 @@ function ImageNode({ id, data, selected }) {
   // 框体预置素材：老师为这个框体上传的参考图，生成前先给学生看。
   const referenceUrl = !data.previewUrl && !data.assetUrl ? String(data.referenceUrl || '') : '';
   const imageUrl = useDisplayUrl(data.previewUrl || data.assetUrl || referenceUrl);
-  return <NodeFrame icon="✦" tone="image" aspectRatio={boxDisplayRatio(data)} variant="media" processing={data.generationStatus === 'PENDING' || data.uploading === true} title={data.title} selected={selected} onRename={(value) => updateNode(id, { title: value })}>
+  return <NodeFrame icon="✦" tone="image" aspectRatio={boxDisplayRatio(data)} variant="media" processing={data.generationStatus === 'PENDING' || data.uploading === true} title={data.title} selected={selected} onRename={(value) => updateNode(id, { title: value })}
+    headingExtra={<MediaDownloadButton url={data.assetUrl || data.previewUrl || referenceUrl} name={data.title} kind="image"/>}>
     {data.uploading === true || data.uploadError ? <UploadState className="learning-node__art" data={data} />
       : data.generationStatus === 'PENDING' ? <GeneratingState className="learning-node__art" modality="IMAGE" startedAt={data.generationStartedAt} />
       : imageUrl
@@ -814,7 +841,8 @@ function VideoNode({ id, data, selected }) {
   // 只有生成出来的图/视频/音频才会出现在框体内」）。所以这里只看框体自己的预置素材和自己的生成结果；
   // 连线素材只在底部面板的「参考/首帧」行里出现，生成时再一起提交。
   const sourceUrl = useDisplayUrl(referenceUrl);
-  return <NodeFrame icon="▶" tone="video" aspectRatio={boxDisplayRatio(data)} variant="media" processing={data.generationStatus === 'PENDING' || data.uploading === true} title={data.title} selected={selected} onRename={(value) => updateNode(id, { title: value })}>
+  return <NodeFrame icon="▶" tone="video" aspectRatio={boxDisplayRatio(data)} variant="media" processing={data.generationStatus === 'PENDING' || data.uploading === true} title={data.title} selected={selected} onRename={(value) => updateNode(id, { title: value })}
+    headingExtra={<MediaDownloadButton url={data.assetUrl || data.previewUrl} name={data.title} kind="video"/>}>
     {data.uploading === true || data.uploadError ? <UploadState className="learning-node__video-preview" data={data} />
       : data.generationStatus === 'PENDING' ? <GeneratingState className="learning-node__video-preview" modality="VIDEO" startedAt={data.generationStartedAt} />
       : videoUrl

@@ -140,9 +140,12 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
     });
   }
   function works(user) {
-    return db.prepare(`SELECT course courseId, version versionId, body, completed, mode FROM kx_runs
+    const rows=db.prepare(`SELECT course courseId, version versionId, body, completed, mode FROM kx_runs
       JOIN kx_versions USING(version) JOIN kx_workspaces_saved ON kx_runs.id=kx_workspaces_saved.run
-      JOIN kx_orders USING(version,user) WHERE user=? AND kx_orders.status='confirmed' ORDER BY kx_runs.rowid DESC`).all(user)
+      JOIN kx_orders USING(version,user) WHERE user=? AND kx_orders.status='confirmed' ORDER BY kx_runs.rowid DESC`).all(user);
+    const latest=new Map();
+    for(const row of rows)if(!latest.has(`${row.courseId}:${row.mode}`))latest.set(`${row.courseId}:${row.mode}`,row);
+    return [...latest.values()]
       .map(row => {
         const course = JSON.parse(row.body);
         return {courseId:row.courseId, versionId:row.versionId, title:course.title, mode:row.mode, completed:JSON.parse(row.completed).length, total:course.steps.length};

@@ -208,3 +208,22 @@ test('service errors preserve the actionable backend message', async () => {
   });
   await assert.rejects(client.quote({}),/模型计费服务待接入/);
 });
+
+test('my works merges saved versions into one item per course workspace',async t=>{
+  const platform=openCoursePlatform(':memory:',{issueRuntimeTicket:()=> 'r'.repeat(43)});
+  t.after(()=>platform.close());
+  const first=platform.publish('operator',{...draft,price:0});
+  await platform.purchase('learner',{courseId:first.id,versionId:first.versionId});
+  const firstCanvas=await platform.start('learner',{courseId:first.id,versionId:first.versionId,mode:'CANVAS'});
+  await platform.save('learner',{...firstCanvas,completed:[],work:{nodes:[],edges:[]}});
+  const second=platform.publish('operator',{...draft,id:first.id,baseVersion:first.versionId,price:0});
+  await platform.purchase('learner',{courseId:second.id,versionId:second.versionId});
+  const secondCanvas=await platform.start('learner',{courseId:second.id,versionId:second.versionId,mode:'CANVAS'});
+  await platform.save('learner',{...secondCanvas,completed:['plan'],work:{nodes:[],edges:[]}});
+  const vibe=await platform.start('learner',{courseId:second.id,versionId:second.versionId,mode:'VIBECODING'});
+  await platform.save('learner',{...vibe,completed:[]});
+  const works=await platform.works('learner');
+  assert.equal(works.length,2);
+  assert.deepEqual(works.map(item=>item.mode).sort(),['CANVAS','VIBECODING']);
+  assert.equal(works.find(item=>item.mode==='CANVAS').versionId,second.versionId);
+});

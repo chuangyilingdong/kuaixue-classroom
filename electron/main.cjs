@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, protocol, net } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell, protocol, net } = require("electron");
 const path = require("node:path");
 const {createHash}=require('node:crypto');
 const { pathToFileURL } = require("node:url");
@@ -189,6 +189,25 @@ ipcMain.handle('vibe:openLocalFolder',async(event,request)=>{
   const error=await shell.openPath(request.directory);
   if(error) throw Error(error);
   return true;
+});
+ipcMain.handle('media:download',async(event,request)=>{
+  trustedWindow(event,classroomWindows);
+  const win=BrowserWindow.fromWebContents(event.sender);
+  let target;
+  try {target=new URL(String(request?.url||''),config.apiOrigin);} catch {throw Error('下载地址无效');}
+  if(target.protocol!=='https:'||target.username||target.password)throw Error('仅支持下载 HTTPS 素材');
+  const fallback=request?.kind==='video'?'.mp4':request?.kind==='audio'?'.mp3':'.png';
+  const fromUrl=path.extname(target.pathname).toLowerCase();
+  const base=String(request?.name||'课程素材').replace(/[<>:"/\\|?*\u0000-\u001f]/g,'_').trim().slice(0,120)||'课程素材';
+  const filename=/\.[a-z0-9]{2,6}$/i.test(base)?base:base+(/^\.[a-z0-9]{2,6}$/.test(fromUrl)?fromUrl:fallback);
+  const choice=await dialog.showSaveDialog(win,{defaultPath:path.join(app.getPath('downloads'),filename)});
+  if(choice.canceled||!choice.filePath)return {cancelled:true};
+  const response=await win.webContents.session.fetch(target.href,{credentials:'include',redirect:'follow'});
+  if(!response.ok||!response.body)throw Error(`素材下载失败（${response.status}）`);
+  const {Readable}=require('node:stream');
+  const {pipeline}=require('node:stream/promises');
+  await pipeline(Readable.fromWeb(response.body),require('node:fs').createWriteStream(choice.filePath));
+  return {cancelled:false,filePath:choice.filePath};
 });
 ipcMain.handle('account:login',async event => {
   trustedWindow(event,classroomWindows);

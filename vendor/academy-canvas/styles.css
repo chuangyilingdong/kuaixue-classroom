@@ -317,6 +317,11 @@
 .learning-node__panel .learning-node__text-result { margin: 0; }
 .learning-node__panel .learning-node__emoji { position: static; width: 30px; height: 30px; flex: 0 0 auto; border-radius: 999px; padding: 0; }
 .learning-node__panel-footer { display: flex; align-items: center; gap: 8px; padding-top: 8px; border-top: 1px solid rgb(255 255 255 / 6%); }
+.learning-node__media-download { display: grid; place-items: center; width: 25px; height: 25px; margin-left: auto; padding: 0; border: 1px solid rgb(255 255 255 / 18%); border-radius: 999px; color: #fff; background: rgb(15 16 18 / 72%); font-size: 14px; line-height: 1; cursor: pointer; backdrop-filter: blur(8px); }
+.learning-node__media-download:hover { background: rgb(32 34 38 / 92%); }
+.learning-node__media-download:disabled { cursor: wait; opacity: .7; }
+.learning-node__media-download.is-done { color: var(--cv-primary); border-color: rgb(163 254 68 / 45%); }
+.learning-node__media-download.is-error { color: #ffb4b4; border-color: rgb(255 107 107 / 45%); }
 .learning-node__status-chip { display: inline-flex; align-items: center; padding: 5px 11px; border: 1px solid var(--cv-border-strong); border-radius: 999px; color: var(--cv-text-faint); background: transparent; font-size: 11px; white-space: nowrap; }
 .learning-node__status-chip.is-done { color: var(--cv-primary); border-color: rgb(163 254 68 / 35%); background: rgb(163 254 68 / 10%); }
 .learning-node__status-chip.is-running { color: var(--cv-text-dim); background: rgb(255 255 255 / 5%); }
