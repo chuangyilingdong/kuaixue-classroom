@@ -74,13 +74,22 @@ export const canvasBillingAliases=Object.freeze({
   'rh-nano-banana-2.1-t2i':'rhart-image-n-nb21-official/text-to-image',
 });
 
+export const canvasExecutionAliases=Object.freeze({
+  'rh-gpt-image-2.6-sunburst-i2i':'rhart-image-g-2.6-official-token/sunburst/edit',
+  'rh-gpt-image-2.6-flare-i2i':'rhart-image-g-2.6-official-token/flare/edit',
+  'rh-gpt-image-2.6-sunburst-t2i':'rhart-image-g-2.6-official-token/sunburst/text-to-image',
+  'rh-gpt-image-2.6-flare-t2i':'rhart-image-g-2.6-official-token/flare/text-to-image',
+  'rh-gpt-image-2.5-sunburst-i2i':'rhart-image-g-2.5-official-token/sunburst/edit',
+  'rh-gpt-image-2.5-flare-i2i':'rhart-image-g-2.5-official-token/flare/edit',
+  'rh-gpt-image-2.5-sunburst-t2i':'rhart-image-g-2.5-official-token/sunburst/text-to-image',
+  'rh-gpt-image-2.5-flare-t2i':'rhart-image-g-2.5-official-token/flare/text-to-image',
+  'rh-nano-banana-2.1-i2i':'rhart-image-n-nb21-official/image-to-image',
+  'rh-nano-banana-2.1-t2i':'rhart-image-n-nb21-official/text-to-image',
+});
+
 function modelEndpoint(value){
   let model=String(value||'').trim().split('::').at(-1).replace(/^\/+/,'');
   if(!model||model.includes('://'))throw Error('画布模型编号无效');
-  const aliases={
-    'rh-minimax-h3-multi':'minimax/hailuo-h3/multimodal-to-video',
-  };
-  if(aliases[model])return aliases[model];
   if(model.startsWith('rh')||model.includes('/')&&!model.startsWith('gpt-image-')&&!model.startsWith('nano-banana-'))return model;
   const gpt=model.match(/^gpt-image-(2\.\d+)\/(flare|sunburst)\/(text-to-image|image-to-image)\/stable-token$/);
   if(gpt)return `rhart-image-g-${gpt[1]}-official-token/${gpt[2]}/${gpt[3]}`;
@@ -95,10 +104,8 @@ function providerModel(value){
 
 export function canvasModelRoute(job){
   const raw=providerModel(job?.modelId);
-  const label=String(job?.modelLabel||'').trim();
-  const labelEndpoint=label?modelEndpoint(label):'';
-  const execution=labelEndpoint!==label&&!label.includes('::')?labelEndpoint:raw;
-  const billingKey=canvasBillingAliases[raw]||(labelEndpoint!==label?labelEndpoint:modelEndpoint(raw));
+  const execution=canvasExecutionAliases[raw]||(raw.startsWith('rh-')?raw:modelEndpoint(raw));
+  const billingKey=canvasBillingAliases[raw]||modelEndpoint(raw);
   const provider=String(job?.modelId||'').split('::')[0];
   return {
     execution,billingKey,

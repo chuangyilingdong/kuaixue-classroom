@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {canvasBillingAliases,canvasModelRoute,createCanvasGenerationAdapter} from '../apps/api/canvas-generation.mjs';
+import {canvasBillingAliases,canvasExecutionAliases,canvasModelRoute,createCanvasGenerationAdapter} from '../apps/api/canvas-generation.mjs';
 
 test('画布生成经主站报价预扣、RunningHub 执行后结算作品',async()=>{
   const calls=[];
@@ -79,13 +79,21 @@ test('MiniMax-H3 使用正式模型键报价并把自动画幅发送为 adaptive
   assert.equal(quote.executionModelKey,'rh-minimax-h3-multi');
   assert.equal(quoteFacts.modelKey,'minimax/hailuo-h3/multimodal-to-video');
   assert.equal(quoteFacts.aspectRatio,'adaptive');
+  const displayNameCannotRoute=canvasModelRoute({
+    modelId:'aicyld-runninghub::rh-minimax-h3-multi',
+    modelLabel:'minimax/hailuo-h3/multimodal-to-video',
+    modality:'VIDEO',
+  });
+  assert.equal(displayNameCannotRoute.execution,'rh-minimax-h3-multi');
+  assert.equal(displayNameCannotRoute.billingKey,'minimax/hailuo-h3/multimodal-to-video');
 });
 
 test('全模态渠道模型都拆分为执行键和正式计费键',()=>{
   assert.ok(Object.keys(canvasBillingAliases).length>=52);
+  assert.equal(Object.keys(canvasExecutionAliases).length,10);
   for(const [model,billingKey] of Object.entries(canvasBillingAliases)){
     const route=canvasModelRoute({modelId:`aicyld-runninghub::${model}`,modelLabel:'自定义名称',modality:'IMAGE'});
-    assert.equal(route.execution,model);
+    assert.equal(route.execution,canvasExecutionAliases[model]||model);
     assert.equal(route.billingKey,billingKey);
   }
   for(const [model,key] of [
