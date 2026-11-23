@@ -8,7 +8,15 @@ export function displayModelLabel(value) {
   const text=String(value || "").trim();
   if(!text) return "";
   const parts=text.split("::");
-  const leaf=parts.at(-1).split("/").filter(Boolean);
+  const provider=parts.at(-1);
+  const gpt=provider.match(/^(?:rh(?:art)?-image-)?g-(\d+(?:\.\d+)?)(?:[\/-]|$)/i) ||
+    provider.match(/^rh-gpt-image-(\d+(?:\.\d+)?)(?:[\/-]|$)/i) ||
+    provider.match(/^gpt-image-(\d+(?:\.\d+)?)(?:[\/-]|$)/i);
+  if(gpt) return `gpt-image-${gpt[1]}`;
+  const nano=provider.match(/^(?:rh(?:art)?-image-)?n-(nb21|nb2)(?:[\/-]|$)/i) ||
+    provider.match(/^(?:rh-)?nano-banana-(\d+(?:\.\d+)?)(?:[\/-]|$)/i);
+  if(nano) return nano[1].toLowerCase()==='nb21'||nano[1]==='2.1' ? 'nano-banana 2.1' : 'nano-banana 2';
+  const leaf=provider.split("/").filter(Boolean);
   let label=leaf.at(-1) || text;
   const operation=leaf.findIndex(segment=>/^(?:text|image|video|audio|music)-(?:to)-(?:image|video|audio|music)$/i.test(segment));
   if(operation>0) label=leaf[0];
@@ -123,12 +131,12 @@ export function normalizeCourseDetail(item) {
     .filter(id=>/^aicyld-runninghub-llm-(?:cn|global)::[A-Za-z0-9._/:+-]+$/.test(id));
   const vibeModelIds=[...new Set([...declaredIds,...legacyIds])];
   const vibeModelLabels=Object.fromEntries(vibeModelIds.map(id=>[id,
-    typeof labels[id]==='string'&&labels[id].trim()?labels[id].trim():displayModelLabel(id)]));
+    displayModelLabel(typeof labels[id]==='string'&&labels[id].trim()?labels[id].trim():id)]));
   const materialGroups=normalizeMediaTree(item.materialGroups ?? [],"materialGroups");
   for(const group of materialGroups){
     for(const material of group.materials || []){
       const box=material?.snapshot?.box;
-      if(box?.model&&!box.modelLabel)box.modelLabel=displayModelLabel(box.model);
+      if(box&&(box.model||box.modelLabel))box.modelLabel=displayModelLabel(box.modelLabel||box.model);
     }
   }
   return {

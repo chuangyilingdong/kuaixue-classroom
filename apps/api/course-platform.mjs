@@ -118,8 +118,7 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
     const row = db.prepare('SELECT * FROM kx_runs WHERE user=? AND version=?').get(user,versionId);
     const run = {id:row.id,revision:row.revision,course,mode,completed:JSON.parse(row.completed),work:mode === 'CANVAS' && row.canvas ? JSON.parse(row.canvas) : null};
     run.generationModes = mode === 'CANVAS' && quoteGeneration && generateOrLookup ? generationModes(course) : [];
-    if (mode === 'VIBECODING') {
-      if (!issueRuntimeTicket) reject(503,'VibeCoding 运行服务待接入');
+    if (mode === 'VIBECODING' && issueRuntimeTicket) {
       run.runtimeTicket = await issueRuntimeTicket({runId:row.id,userId:user,courseId,versionId,mode});
       if (typeof run.runtimeTicket !== 'string' || !/^[A-Za-z0-9_-]{24,512}$/.test(run.runtimeTicket)) reject(503,'运行授权暂不可用');
     }
@@ -258,7 +257,7 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
     if (!assetRoot) reject(503,'课程素材存储待接入');
     return {...row,path:join(assetRoot,row.object_key)};
   }
-  async function quote(user,{id,nodeId,modality,input}) {
+  async function quote(user,{id,nodeId,modality,input,preview=false}) {
     const course = generationContext(user,id);
     if (typeof nodeId !== 'string' || !nodeId || nodeId.length > 150 || !input || typeof input !== 'object' || Array.isArray(input)) reject(400,'生成参数无效');
     const binding = generationBinding(course,nodeId,modality,input);
@@ -271,6 +270,7 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
       modelId,modelLabel:binding.modelLabel || '',input:binding.input};
     const offer = await quoteGeneration(job);
     if (!offer?.quoteId || !Number.isSafeInteger(offer.points) || offer.points < 0 || !Number.isSafeInteger(offer.expiresAt) || offer.expiresAt <= Date.now()) reject(503,'报价暂不可用');
+    if (preview === true) return {id:null,points:offer.points,modelId,expiresAt:offer.expiresAt,preview:true};
     db.prepare("INSERT INTO kx_generation VALUES(?,?,?,?,?,?,'quoted',NULL)").run(jobId,id,nodeId,user,JSON.stringify(job),JSON.stringify(offer));
     return {id:jobId,points:offer.points,modelId,expiresAt:offer.expiresAt};
   }
@@ -289,7 +289,13 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
     });
     if (row.status === 'complete') return JSON.parse(row.result);
     // Gateway reserves/settles by jobId and returns the same terminal outcome on replay.
-    const result = await generateOrLookup(JSON.parse(row.input),JSON.parse(row.quote));
+    let result;
+    try {
+      result = await generateOrLookup(JSON.parse(row.input),JSON.parse(row.quote));
+    } catch (error) {
+      if (error instanceof CourseProblem || Number.isInteger(error?.status)) throw error;
+      reject(502,error?.message || '模型生成失败');
+    }
     if (result?.status === 'released' && result.jobId === jobId) {
       db.prepare("UPDATE kx_generation SET status='failed' WHERE id=? AND status='submitted'").run(jobId);
       reject(409,'生成失败，已释放费用');

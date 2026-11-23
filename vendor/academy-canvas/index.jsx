@@ -24,6 +24,7 @@ import './styles.css';
 import { ratioThumbSize } from './ratioThumb.js';
 // 框体「能不能删」的判据 + 未生成时的引导插画地址（纯函数单独放 .js，守卫 p122 才跑得到）
 import { BOX_EMPTY_ART, isProtectedBoxNode } from './boxRules.js';
+import { displayCanvasModelLabel } from './canvasBoxNode.js';
 import { AudioPlayer } from './AudioPlayer.jsx';
 
 const CanvasActionsContext = createContext(null);
@@ -697,7 +698,7 @@ function SlotParams({ data }) {
   if (data.audio) params.push('含音频');
   // 模型这一格显示**运营配的显示名**（服务端下发的 modelLabel）；没配别名时它 === 真 ID
   // （2026-09-23 用户口径：「在画布…模型名字这里可以映射我改过的名字」）。
-  if (data.modelLabel || data.model) params.push(data.modelLabel || data.model);
+  if (data.modelLabel || data.model) params.push(displayCanvasModelLabel(data.modelLabel || data.model));
   if (!params.length) return null;
   return <span className="learning-node__slot-params">{params.join(' · ')}</span>;
 }
@@ -910,10 +911,34 @@ function GlowEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targ
 }
 const edgeTypes = { default: GlowEdge };
 
+function GenerationPrice({nodeId,modality,input,quoteGeneration}) {
+  const [quote,setQuote]=useState({state:'loading',points:null,error:''});
+  const signature=JSON.stringify(input);
+  useEffect(()=>{
+    if(!quoteGeneration||!nodeId||!modality){setQuote({state:'idle',points:null,error:''});return undefined;}
+    let current=true;
+    setQuote({state:'loading',points:null,error:''});
+    const timer=setTimeout(async()=>{
+      try{
+        const offer=await quoteGeneration({nodeId,modality,input:JSON.parse(signature)});
+        if(current)setQuote({state:'ready',points:Number.isSafeInteger(offer?.points)?offer.points:null,error:''});
+      }catch(error){
+        if(current)setQuote({state:'error',points:null,error:error instanceof Error?error.message:'价格待确认'});
+      }
+    },260);
+    return ()=>{current=false;clearTimeout(timer);};
+  },[nodeId,modality,quoteGeneration,signature]);
+  if(quote.state==='idle')return null;
+  const text=quote.state==='ready'
+    ? (quote.points===0?'预估 免费':`预估 ${quote.points??'—'} 积分`)
+    : quote.state==='loading'?'询价中…':'价格待确认';
+  return <span className={`learning-node__price-chip is-${quote.state}`} title={quote.error||'点击生成时会重新校验价格和余额'}>{text}</span>;
+}
+
 // 画布底部面板（复刻参考的独立底部面板）：编辑当前选中的框体——
 // 提示词 / 画面来源行 / 画幅·清晰度·时长分段胶囊 / 页脚（状态胶囊 + 配置 + ＋ + 生成 ↑）。
 function NodeEditPanel({ node, onRequestMaterials, boxModalities = [] }) {
-  const { updateNode, generateNode, canGenerate, readOnly, enabledCapabilities, getIncomingImageAssetUrls, getIncomingImageRefs, getIncomingAssetRefs } = useCanvasActions();
+  const { updateNode, generateNode, canGenerate, readOnly, enabledCapabilities, getIncomingImageAssetUrls, getIncomingImageRefs, getIncomingAssetRefs, quoteGeneration } = useCanvasActions();
   // 输入框里的 @ 引用：@ 打开候选（连线连过来的素材 + 框体预置素材），选中就把「图片 1」这样的名字插进提示词。
   // hook 必须放在下面所有提前 return 之前（提前 return 之后再加 hook 会白屏，p34 守卫盯着这条）。
   const citationInsertRef = useRef(null);   // 由 PromptEditor 填进来：在光标处插引用芯片
@@ -930,7 +955,7 @@ function NodeEditPanel({ node, onRequestMaterials, boxModalities = [] }) {
     if (!kind) return '未配置';
     const params = [data.aspectRatio, data.resolution].filter(Boolean);
     // 同 SlotParams：显示运营配的显示名（没配别名时 === 真 ID）
-    if (data.modelLabel || data.model) params.push(data.modelLabel || data.model);
+    if (data.modelLabel || data.model) params.push(displayCanvasModelLabel(data.modelLabel || data.model));
     // 锁定的生成方式也要看得见（'生视频 · 480P · MiniMax-H3 · 首尾帧'）—— 老师配的就是这条规则
     if (modeChip) params.push(modeChip);
     if (data.uploaded) return '本地素材';
@@ -1115,7 +1140,10 @@ function NodeEditPanel({ node, onRequestMaterials, boxModalities = [] }) {
       <button type="button" className="learning-canvas__config-chip" title="本框体的生成配置来自课时设置" onClick={() => onRequestMaterials?.()}>✦ {configLabel}</button>
       <span className="learning-canvas__panel-spacer" />
       <span className={`learning-node__status-chip${statusState === 'running' ? ' is-running' : statusState === 'failed' ? ' is-error' : (statusState === 'done' || statusState === 'asset') ? ' is-done' : ''}`}>{statusState === 'running' ? '生成中…' : statusState === 'failed' ? (data.generationError || '生成失败') : statusState === 'done' ? '已生成' : statusState === 'asset' ? '素材' : '未生成'}</span>
-      {canGenerate && canGenerateHere && generate && statusState !== 'running' && !alreadyProduced ? <button type="button" className="learning-node__submit" disabled={readOnly || Boolean(generate.blocked)} title={generate.blocked || generate.label} onClick={() => generateNode(id, generate.modality, generate.payload)}>{generate.label}<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg></button> : null}
+      {canGenerate && canGenerateHere && generate && statusState !== 'running' && !alreadyProduced ? <>
+        <GenerationPrice nodeId={id} modality={generate.modality} input={generate.payload} quoteGeneration={quoteGeneration}/>
+        <button type="button" className="learning-node__submit" disabled={readOnly || Boolean(generate.blocked)} title={generate.blocked || generate.label} onClick={() => generateNode(id, generate.modality, generate.payload)}>{generate.label}<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg></button>
+      </> : null}
     </div>
     {/* ⚠️ 这里原来会把 generate.blocked（「先写下画面描述，再生成」这类前置提示）渲染成一条红色提示。
         用户要求「图4 这种提示要全部删除」——按下了就把按钮置灰 + title 提示即可，不再在面板里刷红字。
@@ -1295,7 +1323,7 @@ function CanvasDockPanel({ node, containerRef, viewportBusy = false, onRequestRo
 
 const nodeTypes = { prompt: PromptNode, image: ImageNode, character: CharacterNode, scene: SceneNode, video: VideoNode, note: NoteNode, audio: AudioNode, animation: AnimationNode };
 
-function CanvasSurface({ initialSnapshot, readOnly, onChange, onGenerateNode, beforeGenerate = null, onUploadFiles, onRequestMaterials, resolveAssetUrl = null, showStarter, capabilities = ['text'], allowNodeCreation = true, focusRequest = null, boxModalities = [], entranceRequest = null, placementRef = null }) {
+function CanvasSurface({ initialSnapshot, readOnly, onChange, onGenerateNode, beforeGenerate = null, quoteGeneration = null, onUploadFiles, onRequestMaterials, resolveAssetUrl = null, showStarter, capabilities = ['text'], allowNodeCreation = true, focusRequest = null, boxModalities = [], entranceRequest = null, placementRef = null }) {
   // 受控课堂画布（allowNodeCreation=false）默认不使用固定起始底稿，避免空画布每次刷新被自动填充。
   const shouldShowStarter = showStarter === undefined ? (!readOnly && allowNodeCreation) : showStarter;
   const initial = useMemo(() => {
@@ -1699,7 +1727,7 @@ function CanvasSurface({ initialSnapshot, readOnly, onChange, onGenerateNode, be
     ? { ...node, className: `${node.className || ''} is-entering`.trim() }
     : node), [entranceRequest?.id, nodes]);
 
-  return <AssetUrlContext.Provider value={resolveAssetUrl}><CanvasActionsContext.Provider value={{ updateNode, generateNode, canGenerate: Boolean(onGenerateNode), removeEdge, removeIncomingRef, readOnly, enabledCapabilities, getIncomingImageAssetUrls, getIncomingImageRefs, getIncomingAssetRefs }}>
+  return <AssetUrlContext.Provider value={resolveAssetUrl}><CanvasActionsContext.Provider value={{ updateNode, generateNode, canGenerate: Boolean(onGenerateNode), removeEdge, removeIncomingRef, readOnly, enabledCapabilities, getIncomingImageAssetUrls, getIncomingImageRefs, getIncomingAssetRefs, quoteGeneration }}>
     <div className={`learning-canvas${readOnly ? ' is-readonly' : ''}`} ref={canvasRef}>
       <ReactFlow
         nodes={displayNodes}

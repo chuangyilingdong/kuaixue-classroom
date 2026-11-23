@@ -69,14 +69,15 @@ test('main-site course open signs a ticket redeemable by a separate runtime conn
   await assert.rejects(runtime.claimPreview(exchanged.previewToken));
 });
 
-test('unset ticket store preserves disabled signing and configured paths must be separate', async t => {
+test('unset ticket store still permits local-first Vibe runs and configured paths must be separate', async t => {
   const platform = openTicketedCoursePlatform(openPlatform, ':memory:', {}, '');
   t.after(() => platform.close());
   const course = platform.publish('operator', {title:'创作', subtitle:'课程工程', price:0, permittedDeliveryModes:['VIBECODING'],
     steps:[{id:'plan', title:'计划', description:'绘制分镜', deliverable:'故事板'}]});
   const version = {courseId:course.id, versionId:course.versionId};
   await platform.purchase('buyer', version);
-  await assert.rejects(platform.start('buyer', {...version, mode:'VIBECODING'}), {status:503});
+  const localFirst=await platform.start('buyer', {...version, mode:'VIBECODING'});
+  assert.equal(localFirst.runtimeTicket,undefined);
   const file = join(tmpdir(), 'example.sqlite');
   for (const invalid of [file, 'relative.sqlite']) {
     assert.throws(() => openTicketedCoursePlatform(openPlatform, file, {}, invalid), /绝对路径/);

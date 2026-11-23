@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { loadCourseCatalog, loadCourseDetail, CourseCatalogError } from "../src/services/courseCatalog.js";
-import { normalizeCourseDetail, normalizeMediaUrl } from "../src/data/courses.js";
+import { displayModelLabel, normalizeCourseDetail, normalizeMediaUrl } from "../src/data/courses.js";
+import { displayCanvasModelLabel } from "../vendor/academy-canvas/canvasBoxNode.js";
 
 test("uses the labeled demo catalog when no service origin is configured", async () => {
   const result = await loadCourseCatalog({ baseUrl: "" });
@@ -142,6 +143,9 @@ test("generation model labels use the model family instead of the text-to-image 
     ],
   });
   assert.deepEqual(detail.models,["deepseek-v4.1-flash","gpt-image-2.5"]);
+  assert.equal(displayModelLabel("rh-gpt-image-2.5-flare-t2i"),"gpt-image-2.5");
+  assert.equal(displayModelLabel("rhart-image-g-2.5-official-token/flare/text-to-image"),"gpt-image-2.5");
+  assert.equal(displayCanvasModelLabel("rh-gpt-image-2.5-flare-t2i"),"gpt-image-2.5");
 });
 
 test("legacy course detail derives VibeCoding runtime IDs from published LLM labels",()=>{
@@ -167,6 +171,22 @@ test("canvas generation boxes display mapped model names instead of channel stri
         model:"gpt-image-2.5/flare/text-to-image/stable-token"}}}]}],
   });
   assert.equal(detail.materialGroups[0].materials[0].snapshot.box.modelLabel,"gpt-image-2.5");
+});
+
+test("raw server model labels are normalized without overwriting operator names",()=>{
+  const detail=normalizeCourseDetail({
+    id:"course-1",versionId:"v1",title:"映射课程",type:"CANVAS",unlockPricePoints:1,
+    learningObjectives:["目标"],previewSteps:["步骤"],permittedDeliveryModes:["CANVAS"],
+    steps:[{id:"one",title:"创作",description:"执行",deliverable:"图片"}],assets:[],
+    materialGroups:[{id:"group",title:"素材",materials:[
+      {id:"raw",title:"原始",materialType:"GENERATION_BOX",snapshot:{box:{id:"raw",title:"原始",modality:"IMAGE",
+        modelBinding:"BOX",model:"rh-gpt-image-2.5-flare-t2i",modelLabel:"rh-gpt-image-2.5-flare-t2i"}}},
+      {id:"custom",title:"自定义",materialType:"GENERATION_BOX",snapshot:{box:{id:"custom",title:"自定义",modality:"IMAGE",
+        modelBinding:"BOX",model:"rh-gpt-image-2.5-flare-t2i",modelLabel:"我的生图模型"}}},
+    ]}],
+  });
+  assert.equal(detail.materialGroups[0].materials[0].snapshot.box.modelLabel,"gpt-image-2.5");
+  assert.equal(detail.materialGroups[0].materials[1].snapshot.box.modelLabel,"我的生图模型");
 });
 
 test("media URLs allow HTTPS and approved relative paths but reject active or unsafe schemes",()=>{

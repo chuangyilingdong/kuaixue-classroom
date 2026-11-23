@@ -1,7 +1,6 @@
 import {useCallback,useEffect,useLayoutEffect,useRef,useState} from 'react';
 import {CourseCanvas} from '../../vendor/academy-canvas/CourseCanvas.jsx';
 import {courseClient} from '../services/courseClient.js';
-import {displayModelLabel} from '../data/courses.js';
 
 function uploadPreviewAsset(file) {
   if (file.size > 1_500_000) return Promise.reject(new Error('本机演示素材需小于 1.5 MiB，联网课程支持更大的素材。'));
@@ -28,6 +27,9 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
   const localLeaseRef = useRef(null);
   const frameRef = useRef(null);
   const onChange = useCallback(snapshot => {work.current=snapshot;},[]);
+  const quoteGeneration = useCallback(async ({nodeId,modality,input}) => {
+    return courseClient.quotePreview({id:run.id,nodeId,modality:modality==='MUSIC'?'AUDIO':modality,input});
+  },[run.id]);
   const uploadAsset = useCallback(file => courseClient.uploadAsset ? courseClient.uploadAsset(run.id,file) : uploadPreviewAsset(file),[run.id]);
   const stopLocal = useCallback(async()=>{
     const lease=localLeaseRef.current;
@@ -108,8 +110,6 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
   async function beforeGenerate({nodeId,modality,input}) {
     try {
       const offer=await courseClient.quote({id:run.id,nodeId,modality:modality==='MUSIC'?'AUDIO':modality,input});
-      const modelLabel=run.course.vibeModelLabels?.[offer.modelId]||displayModelLabel(offer.modelId);
-      if (!window.confirm(offer.pending ? '查询此节点已提交的任务？' : `使用 ${modelLabel}，本次最多消耗 ${offer.points} 积分？`)) return false;
       quotes.current.set(nodeId,offer.id);return true;
     } catch(error) {setNotice(error.message);return false;}
   }
@@ -118,7 +118,7 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
       <span>{run.course.title}</span>
       {!canvas&&localDirectory ? <button disabled={busy} onClick={()=>window.kuaixueDesktop?.vibe?.openLocalFolder({directory:localDirectory}).catch(error=>setNotice(error.message))}>打开工程目录</button> : null}
       <button disabled={busy} onClick={save}>保存</button><output aria-live="polite">{notice}</output></header>
-    {canvas ? <CourseCanvas course={run.course} initial={initial} onChange={onChange} beforeGenerate={beforeGenerate}
+    {canvas ? <CourseCanvas course={run.course} initial={initial} onChange={onChange} beforeGenerate={beforeGenerate} quoteGeneration={quoteGeneration}
       onUploadFiles={uploadAsset}
       onGenerateNode={run.generationModes?.length ? ({nodeId})=>courseClient.generate({id:run.id,jobId:quotes.current.get(nodeId)}) : undefined}/>
     : frameUrl ? <iframe ref={frameRef} className="course-workbench" title="快学 VibeCoding 工作台" referrerPolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads allow-forms allow-modals" src={frameUrl}/>

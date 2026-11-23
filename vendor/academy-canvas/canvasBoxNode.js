@@ -12,12 +12,31 @@
  * 素材面板每行要给老师/学生看清"这个框体自己的参数"（不同框体可以不一样）。
  * 平台没定的参数写「学生选」，一眼就知道进画布后这几项是自己挑的。
  */
+export function displayCanvasModelLabel(value) {
+  const text=String(value||'').trim();
+  if(!text)return '';
+  const provider=text.split('::').at(-1);
+  const gpt=provider.match(/^(?:rh(?:art)?-image-)?g-(\d+(?:\.\d+)?)(?:[\/-]|$)/i) ||
+    provider.match(/^rh-gpt-image-(\d+(?:\.\d+)?)(?:[\/-]|$)/i) ||
+    provider.match(/^gpt-image-(\d+(?:\.\d+)?)(?:[\/-]|$)/i);
+  if(gpt)return `gpt-image-${gpt[1]}`;
+  const nano=provider.match(/^(?:rh(?:art)?-image-)?n-(nb21|nb2)(?:[\/-]|$)/i) ||
+    provider.match(/^(?:rh-)?nano-banana-(\d+(?:\.\d+)?)(?:[\/-]|$)/i);
+  if(nano)return nano[1].toLowerCase()==='nb21'||nano[1]==='2.1' ? 'nano-banana 2.1' : 'nano-banana 2';
+  const leaf=provider.split('/').filter(Boolean);
+  let label=leaf.at(-1)||text;
+  const operation=leaf.findIndex(segment=>/^(?:text|image|video|audio|music)-(?:to)-(?:image|video|audio|music)$/i.test(segment));
+  if(operation>0)label=leaf[0];
+  else if(['stable-token','default','latest'].includes(label.toLowerCase())&&leaf.length>1)label=leaf.at(-2);
+  return label.replace(/-saver$/i,'');
+}
+
 export function boxParamsLabel(box) {
   const slotType = String(box?.modality || '').toLowerCase();
   // 模型这一格一律显示**显示名**（服务端随框体下发的 modelLabel，运营在「模型显示名」那一页配的）；
   // 没配别名时 modelLabel === 真 ID，所以显示效果与以前一致（2026-09-23 用户口径）。
   if (box?.generationDisabled) return '此框体已关闭生成';
-  const modelName = box?.modelLabel || box?.model;
+  const modelName = displayCanvasModelLabel(box?.modelLabel || box?.model);
   if (slotType === 'text') return modelName || '写提示词让 AI 生成文字';
   if (slotType === 'music') {
     const mode = box.mode === 'DESCRIPTION' ? '描述生音乐（平台代写词）' : '歌词生音乐';
@@ -64,7 +83,7 @@ export function buildBoxNode(box, current, { asset = null, pending = false } = {
       aspectRatio: box.aspectRatio || '', resolution: box.resolution || '', model: box.model || '',
       // 模型的**显示名**（2026-09-23 用户口径：后台「模型显示名」里配的别名）。服务端在每次下发时现算，
       // 所以后台改完名字、学生刷新就见效，不用重新发布课包。没配别名时它 === model，画布上的字与以前一样。
-      modelLabel: box.modelLabel || '',
+      modelLabel: displayCanvasModelLabel(box.modelLabel || box.model),
       // 学生自选时可选项（来自该模型的能力配置，服务端随框体下发）
       paramOptions: box.paramOptions || null,
       studentParams: {},

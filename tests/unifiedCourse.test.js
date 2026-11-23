@@ -133,9 +133,12 @@ test('quoted generation uses course model, recovers uncertain settlement on the 
   await p.purchase('learner',target);const run=await p.start('learner',{...target,mode:'CANVAS'});
   const node={id:run.id,nodeId:'scene',modality:'TEXT',input:{prompt:'分镜',modelId:'untrusted'}};
   await assert.rejects(p.quote('learner',{...node,modality:'VIDEO'}),/未开放/);
+  const preview=await p.quote('learner',{...node,preview:true});
+  assert.deepEqual({id:preview.id,preview:preview.preview,points:preview.points},{id:null,preview:true,points:5});
   const offer=await p.quote('learner',node);assert.equal(offer.points,5);assert.equal(settled.size,0);
   const request={id:run.id,jobId:offer.id};await assert.rejects(p.generate('other',request));
-  await assert.rejects(p.generate('learner',request));assert.equal((await p.quote('learner',node)).id,offer.id);
+  await assert.rejects(p.generate('learner',request),error=>error.status===502&&error.message==='timeout');
+  assert.equal((await p.quote('learner',node)).id,offer.id);
   assert.deepEqual(await p.generate('learner',request),{text:'作品'});
   assert.deepEqual(await p.generate('learner',request),{text:'作品'});assert.equal(settled.size,1);
 });
@@ -177,4 +180,13 @@ test('a closed production sale is distinguishable from an unconfirmed order', as
   });
   await assert.rejects(clientFor('PURCHASES_DISABLED').purchase('course','version'), /正式购课暂未开放/);
   await assert.rejects(clientFor('OTHER_LOCK').purchase('course','version'), /请求未确认/);
+});
+
+test('service errors preserve the actionable backend message', async () => {
+  const client=createCourseClient({
+    base:'https://example.invalid',
+    fetchImpl:async()=>Response.json({error:{message:'模型计费服务待接入'}},{status:503}),
+    account:()=>assert.fail('account should not load'),
+  });
+  await assert.rejects(client.quote({}),/模型计费服务待接入/);
 });

@@ -21,9 +21,7 @@ export function createCourseClient({ base, vibeOrigin, parentOrigin, fetchImpl =
     const serverMessage = problem?.error?.message;
     const message = response.status === 403
       ? `当前账号没有此课程工作区的权益。${serverMessage ? ` ${serverMessage}` : ''}`
-      : [413,415].includes(response.status) && serverMessage
-        ? serverMessage
-        : errors[response.status] || serverMessage || '请求未确认，请刷新账户或重新打开课程。';
+      : serverMessage || errors[response.status] || '请求未确认，请刷新账户或重新打开课程。';
     throw Object.assign(new Error(message), {status:response.status});
   }
   async function request(path, body, timeout=20000) {
@@ -65,7 +63,7 @@ export function createCourseClient({ base, vibeOrigin, parentOrigin, fetchImpl =
           !Array.isArray(run.completed) || run.completed.some(id => !course.steps.some(step => step.id === id))) throw new Error('工作区与所购版本不符。');
       if (mode === 'CANVAS' && run.work != null && (!Array.isArray(run.work.nodes) || !Array.isArray(run.work.edges))) throw new Error('画布作品格式不正确。');
       return {id:run.id, revision:run.revision, completed:run.completed, work:run.work, course, mode, generationModes:run.generationModes || [],
-        frameUrl:mode === 'VIBECODING' ? workbenchUrl(vibeOrigin,parentOrigin,run.id,run.runtimeTicket) : null};
+        frameUrl:mode === 'VIBECODING' && run.runtimeTicket ? workbenchUrl(vibeOrigin,parentOrigin,run.id,run.runtimeTicket) : null};
     },
     works: () => request('course-runs/works',{}),
     async localRuntime(id) {
@@ -136,6 +134,7 @@ export function createCourseClient({ base, vibeOrigin, parentOrigin, fetchImpl =
       };
     },
     quote: body => request('generations/quote',body),
+    quotePreview: body => request('generations/quote',{...body,preview:true}),
     generate: body => request('generations/confirm',body,360000),
     async save({id,mode,completed,revision,work}) {
       const data = await request('course-runs/save', {id,mode,completed,revision,...(mode === 'CANVAS' ? {work} : {})});
