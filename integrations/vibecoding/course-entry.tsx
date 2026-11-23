@@ -45,6 +45,12 @@ function chooseClassroomPaths(kind: 'directory' | 'file', multiple = false): Pro
   });
 }
 
+function workspaceFileUrl(path: string) {
+  const url = new URL('file:///');
+  url.pathname = `/${path.replaceAll('\\', '/')}`;
+  return url.href;
+}
+
 function createWebPlatform(presets, openCourseHtmlPreview): CourseWebPlatform {
   return {
     classroom: {openCourseHtmlPreview, getPresets:async () => presets,getSnapshot:async () => null,
@@ -53,6 +59,7 @@ function createWebPlatform(presets, openCourseHtmlPreview): CourseWebPlatform {
       logout:async () => {throw Error('请使用快学账号菜单');},scanWorkspaceFiles:async () => {throw Error('使用快学课程工程');},
       submitWork:async () => {throw Error('使用快学作品保存');},listWorks:async () => ({items:[]})},
     canSelectFilePath: true,
+    canOpenLocalFiles: true,
     selectDirectory: async () => (await chooseClassroomPaths('directory'))[0] ?? null,
     selectFile: async () => (await chooseClassroomPaths('file'))[0] ?? null,
     selectFiles: () => chooseClassroomPaths('file', true),
@@ -98,7 +105,10 @@ function createWebPlatform(presets, openCourseHtmlPreview): CourseWebPlatform {
     canOpenCommunity: async () => false,
     openInFileManager: () =>
       Promise.resolve({ success: false, error: "Not supported in web mode" }),
-    openExternalFile: () => Promise.resolve({ success: false, error: "Not supported in web mode" }),
+    openExternalFile: (path: string) =>
+      Promise.resolve(openCourseHtmlPreview(workspaceFileUrl(path))
+        ? { success: true }
+        : { success: false, error: "课程工作区只预览 HTML 文件" }),
     registerOAuthState: (_payload) => {},
     onOAuthCallback: () => () => {},
     onPaymentCallback: () => () => {},
@@ -179,16 +189,6 @@ history.replaceState(null, '', location.pathname);
 function reportToClassroom(message: string) {
   try { window.parent.postMessage({type:'kuaixue-workbench-error',message}, '*'); } catch {}
 }
-function focusCourseComposer(attempt = 0) {
-  const active = document.activeElement;
-  if (active && active !== document.body) return;
-  const editor = document.querySelector<HTMLElement>('[role="textbox"][contenteditable="true"]');
-  if (editor) {
-    editor.focus();
-    return;
-  }
-  if (attempt < 80) setTimeout(() => focusCourseComposer(attempt + 1), 100);
-}
 async function enterCourse() {
   const runId = launch.get('run');
   const ticket = launch.get('ticket');
@@ -222,7 +222,6 @@ async function enterCourse() {
       initialWorkspaceIdentity={runtime.workspaceIdentity} restoreSession={false} allowOpenWorkspace
       supportsSettings={false} preferDirectoryBrowser={false} supportsEmbeddedBrowser={false} allowRemoteWorkspace={false} />
   </ZCodeIntlProvider></AppErrorBoundary>);
-  setTimeout(() => focusCourseComposer(), 0);
 }
 root.render(<p role="status">正在打开课程工作区…</p>);
 void enterCourse().catch(error => {

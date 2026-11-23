@@ -39,11 +39,15 @@ test('VibeCoding 支持原生目录、文件选择和新工作区',()=>{
   const run=readFileSync(new URL('../src/ui/CourseRun.jsx',import.meta.url),'utf8');
   const main=readFileSync(new URL('../electron/main.cjs',import.meta.url),'utf8');
   const preload=readFileSync(new URL('../electron/preload.cjs',import.meta.url),'utf8');
+  const builder=readFileSync(new URL('../scripts/build-vibe-workbench.mjs',import.meta.url),'utf8');
   assert.match(entry,/allowOpenWorkspace(?:\s|\/|>)/);
   assert.doesNotMatch(entry,/allowOpenWorkspace=\{false\}/);
   assert.match(entry,/selectDirectory:\s*async/);
   assert.match(entry,/selectFiles:\s*\(\)\s*=>\s*chooseClassroomPaths/);
-  assert.match(entry,/focusCourseComposer/);
+  // 焦点由 ZCode 自己的工作区/会话状态管理；课程壳层再用定时器抢焦点会造成
+  // 弹层被关闭、输入框闪烁或窗口反复请求前台。
+  assert.doesNotMatch(entry,/focusCourseComposer/);
+  assert.match(builder,/dedupe:\['react','react-dom'/);
   assert.match(run,/kuaixue-classroom-paths-request/);
   assert.match(run,/function cleanCanvasWork/);
   assert.match(main,/ipcMain\.handle\('vibe:selectPaths'/);

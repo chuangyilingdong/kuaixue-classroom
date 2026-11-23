@@ -35,14 +35,20 @@ async function loadCourseSource(id) {
   // optional for editing, so the upstream provider setup dialog must not block the editor.
   if (resolve(id) === resolve(root,'../ui/src/Root.tsx')) {
     const source = await readFile(id, 'utf8');
-    const gate = 'shouldEnableProviderAvailabilityLoginEntryGuard();';
-    if (source.split(gate).length !== 2) throw Error('灵动工作台入口变化，请核对课程适配');
-    return source.replace(gate,'false;');
+    const legacyGate = 'shouldEnableProviderAvailabilityLoginEntryGuard();';
+    if (source.includes(legacyGate)) return source.replace(legacyGate,'false;');
+    // ZCode 4.x 把启动供应商门禁改为带参数调用。课堂权益已由课程服务校验，
+    // 不能再用个人账号或供应商登录门禁阻塞编辑和课堂模型。
+    const gate = /const providerAvailabilityLoginEntryGuardEnabled\s*=\s*shouldEnableProviderAvailabilityLoginEntryGuard\(\{[\s\S]*?\n\s*\}\);/;
+    if (!gate.test(source)) throw Error('ZCode 工作台供应商启动门禁变化，请核对课程适配');
+    return source.replace(gate,'const providerAvailabilityLoginEntryGuardEnabled = false;');
   }
   if (resolve(id) === resolve(root,'../ui/src/hooks/useAppPanels.ts')) {
     const source = await readFile(id, 'utf8');
     const hook = 'const prepareWorkPreview = platform?.classroom?.prepareWorkPreview;';
-    if (source.split(hook).length !== 2) throw Error('灵动作品预览入口变化，请核对课程适配');
+    // ZCode 4.x 的 HTML 产物预览已经统一走 browser side pane。课堂仍保留自己的
+    // 受保护静态预览，后续通过平台回调接入；不再依赖已经移除的旧 hook。
+    if (!source.includes(hook)) return null;
     return source.replace(hook, `const classroom = platform?.classroom as {openCourseHtmlPreview?(url: string): boolean} | undefined;
       if (classroom?.openCourseHtmlPreview?.(payload.url)) return;
       ${hook}`);
@@ -56,7 +62,8 @@ async function loadCourseSource(id) {
 }
 const output = process.argv.includes('--candidate') ? '../release/vibe-workbench-candidate/' : '../release/vibe-course-web/';
 await build({root, configFile:resolve(root, 'vite.config.ts'), base:'/kuaixue/workbench/',
-  resolve:{alias:{
+  resolve:{dedupe:['react','react-dom','react/jsx-runtime','react/jsx-dev-runtime'],alias:{
+    'kuaixue-presets-dialog':fileURLToPath(new URL('../integrations/vibecoding/LingdongPresetsDialog.tsx',import.meta.url)),
     'kuaixue-course-html-preview':fileURLToPath(new URL('../integrations/vibecoding/course-html-preview.mjs',import.meta.url)),
     'kuaixue-course-preview.css':fileURLToPath(new URL('../integrations/vibecoding/course-html-preview.css',import.meta.url)),
     'kuaixue-classroom-font.css':fileURLToPath(new URL('../electron/classroom-font.css',import.meta.url))}},

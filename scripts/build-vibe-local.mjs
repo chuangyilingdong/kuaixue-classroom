@@ -1,19 +1,19 @@
 import {createRequire} from 'node:module';
-import {access,copyFile,cp,mkdir,mkdtemp,rm} from 'node:fs/promises';
+import {access,copyFile,cp,mkdir,mkdtemp,readdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {resolve,join} from 'node:path';
 import {extractAll} from '@electron/asar';
 const root=resolve(process.argv[2]);
 const installed=resolve(process.argv[3]||'E:/灵动code/@zcodedesktop/resources/glm');
 const cliSource=resolve(process.argv[4]||join(root,'apps/zcode-cli/packages/cli/dist/zcode.cjs'));
-const runtime=resolve('release/vibe-local-runtime');
+const runtime=resolve(process.argv.includes('--candidate')?'release/vibe-local-runtime-candidate':'release/vibe-local-runtime');
 const require=createRequire(join(root,'packages/server/package.json'));
 const {build}=require('esbuild');
 await mkdir(runtime,{recursive:true});
 const options={bundle:true,platform:'node',target:'node22',logLevel:'warning',minify:false,legalComments:'eof',plugins:[{name:'course-local-only',setup(b){
   b.onResolve({filter:/^(ssh2|node-pty|@lydell\/.*)$/}, args=>({path:args.path,namespace:'local-only'}));
   b.onLoad({filter:/.*/,namespace:'local-only'},()=>({contents:`export function spawn(){throw Error('课程演示未启用终端或远程连接')} export class Client {connect(){spawn()}} export default {Client,spawn};`}));
-}}],external:['bufferutil','utf-8-validate','*.node','playwright-core']};
+}}],external:['bufferutil','utf-8-validate','*.node','playwright-core','@napi-rs/keyring']};
 options.plugins.unshift({name:'upstream-compatibility',setup(builder){
   builder.onLoad({filter:/(?:session-store\.port|zcode-protocol-legacy-types)\.ts$/},async args=>{
     let source=await import('node:fs/promises').then(fs=>fs.readFile(args.path,'utf8'));
@@ -57,4 +57,10 @@ catch {
 }
 await mkdir(join(runtime,'node_modules'),{recursive:true});
 await cp(playwrightSource,join(runtime,'node_modules','playwright-core'),{recursive:true,dereference:true});
+const keyringRoot=join(root,'node_modules','@napi-rs');
+await cp(join(keyringRoot,'keyring'),join(runtime,'node_modules','@napi-rs','keyring'),{recursive:true,dereference:true});
+for(const name of await readdir(keyringRoot)){
+  if(!name.startsWith('keyring-'))continue;
+  await cp(join(keyringRoot,name),join(runtime,'node_modules','@napi-rs',name),{recursive:true,dereference:true});
+}
 if(temporary) await rm(temporary,{recursive:true,force:true});
