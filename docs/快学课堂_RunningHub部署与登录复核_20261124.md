@@ -61,6 +61,18 @@ status = submitted
 该任务发生在 `00:27` 新服务部署之前。本次没有再次触发 42 积分生成，
 因此视频生成、结算和作品显示仍需账号本人使用正式账号复测一次。
 
+主站计费库已核对同一任务：
+
+```text
+status = refunded
+reservedPoints = 42
+settledPoints = 0
+refundedPoints = 42
+reason = RunningHub 未返回任务编号
+```
+
+旧预扣已完整退回，没有残留 42 积分占用。
+
 ## VibeCoding 二次登录
 
 Nginx 日志显示客户端在 `00:32` 至 `00:34` 多次加载
