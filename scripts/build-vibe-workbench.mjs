@@ -52,6 +52,63 @@ async function loadCourseSource(id) {
     if (!gate.test(source)) throw Error('ZCode 工作台供应商启动门禁变化，请核对课程适配');
     return source.replace(gate,'const providerAvailabilityLoginEntryGuardEnabled = false;');
   }
+  if (resolve(id) === resolve(root,'../ui/src/v4/ConversationComposer.tsx')) {
+    let source = await readFile(id, 'utf8');
+    source = source.replace(/\r\n/g,'\n');
+    const snapshot = 'const { snapshot: classroomSnapshot } = useClassroomPlatformSnapshot();';
+    if (!source.includes(snapshot)) throw Error('ZCode 课程额度快照入口变化，请核对课程适配');
+    source = source.replace(snapshot,'const { snapshot: classroomSnapshot } = useClassroomPlatformSnapshot({ pollMs: 1_000 });');
+    const prep = 'const prepModeRef = useRef(prepMode);';
+    if (!source.includes(prep)) throw Error('ZCode 课程 Composer 状态入口变化，请核对课程适配');
+    source = source.replace(prep, `const classroomQuota = classroomSnapshot?.quota ?? null;
+  const classroomQuotaRemaining = classroomQuota?.limit == null ? null : Math.max(0, classroomQuota.remaining ?? classroomQuota.limit - classroomQuota.used);
+  const classroomQuotaExhausted = Boolean(classroomQuota && classroomQuotaRemaining !== null && classroomQuotaRemaining <= 0);
+  const classroomQuotaLabel = !classroomQuota ? "" : classroomQuota.limit === null ? "Vibe 不限次数" : classroomQuotaRemaining === 0 ? "Vibe 0 次可用" : \`Vibe 剩余 \${classroomQuotaRemaining} 次\`;
+  const classroomQuotaTitle = !classroomQuota ? "" : classroomQuota.limit === null ? "本课程 VibeCoding 不限发送次数" : classroomQuotaExhausted ? \`本课程 VibeCoding 次数已用完（已用 \${classroomQuota.used} 次，上限 \${classroomQuota.limit} 次），发送按钮已停用\` : \`本课程 VibeCoding 剩余 \${classroomQuotaRemaining} 次，已用 \${classroomQuota.used} 次，上限 \${classroomQuota.limit} 次\`;
+  ${prep}`);
+    const canSend = `  const canSend =
+    !disabled &&
+    !pending &&`;
+    if (!source.includes(canSend)) throw Error('ZCode Composer 发送门禁变化，请核对课程适配');
+    source = source.replace(canSend,`  const canSend =
+    !disabled &&
+    !pending &&
+    !classroomQuotaExhausted &&`);
+    const submitGuard = `        !submissionReady ||
+        (createSubmissionFromComposer !== undefined && submission === null) ||`;
+    if (!source.includes(submitGuard)) throw Error('ZCode Composer 提交门禁变化，请核对课程适配');
+    source = source.replace(submitGuard,`        !submissionReady ||
+        classroomQuotaExhausted ||
+        (createSubmissionFromComposer !== undefined && submission === null) ||`);
+    const submitDisabled = 'submitDisabled={pending || !routingAllowsSend || !attachmentsReady || !submissionReady}';
+    if (!source.includes(submitDisabled)) throw Error('ZCode Composer 输入发送门禁变化，请核对课程适配');
+    source = source.replace(submitDisabled,'submitDisabled={pending || !routingAllowsSend || !attachmentsReady || !submissionReady || classroomQuotaExhausted}');
+    const dependency = `      createSubmissionFromComposer,
+      submissionReady,`;
+    if (!source.includes(dependency)) throw Error('ZCode Composer 提交依赖变化，请核对课程适配');
+    source = source.replace(dependency,`      createSubmissionFromComposer,
+      submissionReady,
+      classroomQuotaExhausted,`);
+    const leadingMarker = `        />
+        {/* 附件画廊重构曾整段覆盖 leadingActions，误删 CUA 常驻入口。`;
+    if (!source.includes(leadingMarker)) throw Error('ZCode Composer 底栏结构变化，请核对课程适配');
+    source = source.replace(leadingMarker,`        />
+        {classroomQuotaLabel ? <span
+          className={\`inline-flex h-7 shrink-0 items-center rounded-full border px-2.5 text-ui-sm font-medium tabular-nums \${classroomQuotaExhausted ? "border-[var(--color-warning)]/45 bg-[var(--color-warning)]/10 text-[var(--color-warning)]" : "border-input-border bg-input text-foreground-subtle"}\`}
+          title={classroomQuotaTitle}
+          aria-label={classroomQuotaTitle}
+          aria-live="polite"
+          data-kuaixue-vibe-quota="true"
+        >{classroomQuotaLabel}</span> : null}
+        {/* 附件画廊重构曾整段覆盖 leadingActions，误删 CUA 常驻入口。`);
+    return source;
+  }
+  if (resolve(id) === resolve(root,'../ui/src/v4/composer/V4ComposerToolbar.tsx')) {
+    const source = await readFile(id, 'utf8');
+    const quota = /  const classroomQuotaLabel = useMemo\(\(\) => \{[\s\S]*?\n  \}, \[classroomSnapshot\?\.quota\?\.limit, classroomSnapshot\?\.quota\?\.used\]\);/;
+    if (!quota.test(source)) throw Error('ZCode 课程模型栏额度结构变化，请核对课程适配');
+    return source.replace(quota,'  const classroomQuotaLabel = "";');
+  }
   if (resolve(id) === resolve(root,'../ui/src/hooks/useAppPanels.ts')) {
     const source = await readFile(id, 'utf8');
     const hook = 'const prepareWorkPreview = platform?.classroom?.prepareWorkPreview;';

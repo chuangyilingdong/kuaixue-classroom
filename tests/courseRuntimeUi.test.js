@@ -54,14 +54,28 @@ test('VibeCoding 支持原生目录、文件选择和新工作区',()=>{
   assert.match(preload,/'selectPaths'/);
 });
 
-test('Vibe 使用次数嵌入上下文控件左侧并随外层额度刷新',()=>{
+test('Vibe 剩余次数放在输入框底栏，耗尽时禁用发送并实时刷新',()=>{
   const run=readFileSync(new URL('../src/ui/CourseRun.jsx',import.meta.url),'utf8');
   const entry=readFileSync(new URL('../integrations/vibecoding/course-entry.tsx',import.meta.url),'utf8');
   const local=readFileSync(new URL('../electron/course-local-vibe.cjs',import.meta.url),'utf8');
-  assert.doesNotMatch(run,/type:'kuaixue-vibe-usage'/);
-  assert.match(run,/course-vibe-usage-caption/);
-  assert.doesNotMatch(entry,/mountCourseUsage/);
+  const builder=readFileSync(new URL('../scripts/build-vibe-workbench.mjs',import.meta.url),'utf8');
+  assert.doesNotMatch(run,/course-vibe-usage-caption/);
+  assert.match(run,/type:'kuaixue-vibe-usage'/);
+  assert.match(run,/setInterval\(refreshUsage,1000\)/);
+  assert.match(entry,/getSnapshot:async \(\) => courseUsage/);
+  assert.match(entry,/event\.data\?\.type === 'kuaixue-vibe-usage'/);
+  assert.match(builder,/classroomQuotaExhausted/);
+  assert.match(builder,/Vibe 0 次可用/);
+  assert.match(builder,/data-kuaixue-vibe-quota/);
+  assert.match(builder,/!classroomQuotaExhausted/);
   assert.match(local,/usageLimit:String\(gateway\.usage\.limit\)/);
+});
+
+test('Vibe 工作区默认不自动打开作品预览',()=>{
+  const run=readFileSync(new URL('../src/ui/CourseRun.jsx',import.meta.url),'utf8');
+  assert.match(run,/const \[previewOpen,setPreviewOpen\] = useState\(false\)/);
+  assert.match(run,/type==='kuaixue-open-html-preview'/);
+  assert.match(run,/setPreviewOpen\(true\)/);
 });
 
 test('当前工程提供 HTML 预览入口并打开课程侧边栏',()=>{

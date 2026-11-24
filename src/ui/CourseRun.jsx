@@ -38,7 +38,7 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
   const [localDirectory,setLocalDirectory] = useState('');
   const [previewFile,setPreviewFile] = useState('');
   const [modelUsage,setModelUsage] = useState(null);
-  const [previewOpen,setPreviewOpen] = useState(!canvas);
+  const [previewOpen,setPreviewOpen] = useState(false);
   const [previewUrl,setPreviewUrl] = useState('');
   const [previewRevision,setPreviewRevision] = useState(0);
   const localLeaseRef = useRef(null);
@@ -132,9 +132,18 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
       } catch {}
     }
     void refreshUsage();
-    const timer=setInterval(refreshUsage,5000);
+    const timer=setInterval(refreshUsage,1000);
     return ()=>{cancelled=true;clearInterval(timer);};
   },[canvas,localLease,run.id]);
+  useEffect(()=>{
+    const frame=frameRef.current;
+    if(canvas||!frameUrl||!frame||!modelUsage) return undefined;
+    const targetOrigin=new URL(frameUrl).origin;
+    const sendUsage=()=>frame.contentWindow?.postMessage({type:'kuaixue-vibe-usage',usage:modelUsage},targetOrigin);
+    sendUsage();
+    frame.addEventListener('load',sendUsage);
+    return ()=>frame.removeEventListener('load',sendUsage);
+  },[canvas,frameUrl,modelUsage]);
   useEffect(()=>{
     if(canvas||!localLease||!previewOpen) return undefined;
     let cancelled=false;
@@ -236,12 +245,8 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
       quotes.current.set(nodeId,offer.id);return true;
     } catch(error) {setNotice(error.message);return false;}
   }
-  const usageText=modelUsage?(modelUsage.limit===0?'不限次数':`${modelUsage.used}/${modelUsage.limit}`):'—';
   return <section className="course-surface" aria-label={canvas?'学院画布工作区':'灵动 VibeCoding 工作区'}>
     <header className="course-caption"><button disabled={busy} onClick={async()=>{if(await save()) close();}}>‹ 返回课程</button>
-      {!canvas&&modelUsage ? <span className={`course-vibe-usage-caption${modelUsage.limit>0&&modelUsage.remaining===0?' is-empty':''}`}
-        aria-label={`本课程 VibeCoding 已用 ${modelUsage.used} 次，上限 ${modelUsage.limit} 次`}
-        title={`本课程 VibeCoding：已用 ${modelUsage.used}${modelUsage.limit===0?'，不限次数':` / ${modelUsage.limit}`}`}>Vibe {usageText}</span> : null}
       <span>{run.course.title}</span>
       {!canvas&&localDirectory ? <button disabled={busy} onClick={()=>window.kuaixueDesktop?.vibe?.openLocalFolder({directory:localDirectory}).catch(error=>setNotice(error.message))}>打开工程目录</button> : null}
       {!canvas ? <button disabled={busy} onClick={()=>setPreviewOpen(open=>!open)}>{previewOpen?'关闭预览':'预览作品'}</button> : null}

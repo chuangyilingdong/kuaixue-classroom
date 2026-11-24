@@ -79,19 +79,13 @@ export const canvasBillingAliases=Object.freeze({
   'rh-nano-banana-2.1-t2i':'rhart-image-n-nb21-official/text-to-image',
 });
 
-export const canvasExecutionAliases=Object.freeze({
-  'rh-minimax-h3-multi':'minimax/hailuo-h3/multimodal-to-video',
-  'rh-gpt-image-2.6-sunburst-i2i':'rhart-image-g-2.6-official-token/sunburst/edit',
-  'rh-gpt-image-2.6-flare-i2i':'rhart-image-g-2.6-official-token/flare/edit',
-  'rh-gpt-image-2.6-sunburst-t2i':'rhart-image-g-2.6-official-token/sunburst/text-to-image',
-  'rh-gpt-image-2.6-flare-t2i':'rhart-image-g-2.6-official-token/flare/text-to-image',
-  'rh-gpt-image-2.5-sunburst-i2i':'rhart-image-g-2.5-official-token/sunburst/edit',
-  'rh-gpt-image-2.5-flare-i2i':'rhart-image-g-2.5-official-token/flare/edit',
-  'rh-gpt-image-2.5-sunburst-t2i':'rhart-image-g-2.5-official-token/sunburst/text-to-image',
-  'rh-gpt-image-2.5-flare-t2i':'rhart-image-g-2.5-official-token/flare/text-to-image',
-  'rh-nano-banana-2.1-i2i':'rhart-image-n-nb21-official/image-to-image',
-  'rh-nano-banana-2.1-t2i':'rhart-image-n-nb21-official/text-to-image',
-});
+// RunningHub price-preview and execution both use the canonical provider model key.
+// Course/admin channel aliases are display/selection keys only and must never reach
+// /openapi/v2. Keeping one table prevents a newly added model from working for quote
+// but failing later with an opaque "1001 Invalid URL".
+export const canvasExecutionAliases=Object.freeze(Object.fromEntries(
+  Object.entries(canvasBillingAliases),
+));
 
 function modelEndpoint(value){
   let model=String(value||'').trim().split('::').at(-1).replace(/^\/+/,'');
@@ -110,13 +104,15 @@ function providerModel(value){
 
 export function canvasModelRoute(job){
   const raw=providerModel(job?.modelId);
-  const execution=canvasExecutionAliases[raw]||(raw.startsWith('rh-')?raw:modelEndpoint(raw));
-  const billingKey=canvasBillingAliases[raw]||modelEndpoint(raw);
   const provider=String(job?.modelId||'').split('::')[0];
+  const text=provider==='aicyld-runninghub-llm-cn'||provider==='aicyld-runninghub-llm-global'||String(job?.modality||'').toUpperCase()==='TEXT';
+  const execution=canvasExecutionAliases[raw]||(!raw.startsWith('rh-')||text?modelEndpoint(raw):'');
+  if(!execution)throw Error(`画布模型 ${raw} 尚未配置 RunningHub 正式执行路径`);
+  const billingKey=canvasBillingAliases[raw]||modelEndpoint(raw);
   return {
     execution,billingKey,
     aiSite:provider==='aicyld-runninghub-ai-media'||provider==='aicyld-runninghub-llm-global'||AI_MEDIA_MODELS.has(execution),
-    text:provider==='aicyld-runninghub-llm-cn'||provider==='aicyld-runninghub-llm-global'||String(job?.modality||'').toUpperCase()==='TEXT',
+    text,
   };
 }
 
@@ -124,10 +120,29 @@ function modalityCategory(modality){
   return ({TEXT:'text',IMAGE:'image',VIDEO:'video',AUDIO:'audio',MUSIC:'audio'})[modality]||'image';
 }
 
-function generationBody(job,assetOptions={}){
+function normalizedImageResolution(value,fallback='1k'){
+  const raw=String(value||'').toLowerCase();
+  if(raw.includes('4k'))return '4k';
+  if(raw.includes('2k')||raw.includes('1080'))return '2k';
+  return raw.includes('1k')||raw.includes('720')?fallback:'2k';
+}
+
+function generationBody(job,assetOptions={},route=canvasModelRoute(job)){
   const input=job.input&&typeof job.input==='object'?job.input:{};
   const params=input.params&&typeof input.params==='object'?input.params:{};
-  const body={...params};
+  const body={};
+  const endpoint=route.execution;
+  const category=modalityCategory(job.modality);
+  for(const key of [
+    'aspectRatio','resolution','quality','outputFormat','n','speed','targetResolution',
+    'firstFrameUrl','firstImageUrl','lastFrameUrl','voiceId','voiceLanguage','voiceSpeed',
+    'voice_id','enable_base64_output','english_normalization','lyrics','sessionId','faceId',
+    'soundStartTime','soundEndTime','soundInsertTime','characterOrientation','keepOriginalSound',
+    'thinkingLevel','complexity','moderation','svgModel','svgReasoningEffort','frameCount',
+    'frameDurationMs','outputCompression','textRecognition',
+  ]){
+    if(params[key]!==undefined&&params[key]!=='')body[key]=params[key];
+  }
   const signingOptions=assetOptions.secret?{
     publicOrigin:assetOptions.publicOrigin,secret:assetOptions.secret,
     expires:Math.floor(Date.now()/1000)+Math.max(60,Math.min(7200,assetOptions.ttlSeconds||3600)),
@@ -146,38 +161,146 @@ function generationBody(job,assetOptions={}){
   const imageUrls=references.filter(item=>item.type==='IMAGE').map(signedReference);
   const videoUrls=references.filter(item=>item.type==='VIDEO').map(signedReference);
   const audioUrls=references.filter(item=>item.type==='AUDIO').map(signedReference);
-  if(imageUrls.length)body.imageUrls=imageUrls;
-  if(videoUrls.length)body.videoUrls=videoUrls;
-  if(audioUrls.length)body.audioUrls=audioUrls;
   if(typeof input.sourceAssetUrl==='string'&&/^https:\/\//.test(input.sourceAssetUrl))
     body.sourceImage=signingOptions?signedCourseAssetUrl(input.sourceAssetUrl,signingOptions):input.sourceAssetUrl;
   if(typeof input.lastFrameAssetUrl==='string'&&/^https:\/\//.test(input.lastFrameAssetUrl))
     body.lastFrameImage=signingOptions?signedCourseAssetUrl(input.lastFrameAssetUrl,signingOptions):input.lastFrameAssetUrl;
-  if(String(job.modality||'').toUpperCase()==='VIDEO'&&body.aspectRatio==='auto')body.aspectRatio='adaptive';
-  const model=providerModel(job?.modelId);
-  if(model==='rh-minimax-h3-multi'){
-    const ratio=body.aspectRatio;
-    const duration=body.durationSeconds;
-    // H3 的可执行 schema 不接受 generateAudio。已成功跑过的 H3 通道同样
-    // 不发送该字段；传 false 也会被上游视为参数校验失败，并返回空 taskId。
-    const h3={prompt:body.prompt,ratio:ratio==='auto'?'adaptive':ratio||'adaptive',
-      resolution:body.resolution||'768P',duration:String(duration||5)};
-    for(const key of ['imageUrls','videoUrls','audioUrls','clientId'])if(body[key]!==undefined)h3[key]=body[key];
-    return h3;
-  }
-  if(model==='rh-minimax-h3-i2v'){
-    const ratio=body.aspectRatio;
-    const duration=body.durationSeconds;
-    if(ratio!==undefined&&ratio!=='')body.ratio=ratio;
-    if(duration!==undefined&&duration!=='')body.duration=String(duration);
-    for(const key of ['aspectRatio','durationSeconds','audio','generateAudio','audioRole','inputMode','title'])delete body[key];
+  const aspectRatio=params.aspectRatio==='auto'?'adaptive':params.aspectRatio;
+  const duration=String(params.durationSeconds||5);
+  const imageEndpoint=category==='image';
+  const videoEndpoint=category==='video';
+  const audioEndpoint=category==='audio';
+
+  if(imageEndpoint){
+    const youchuan=endpoint.includes('youchuan/text-to-image');
+    if(youchuan){
+      body.aspectRatio=aspectRatio||'1:1';
+      body.quality=endpoint.includes('v81')?(body.quality==='4'?'4':'1'):(['2','3','4'].includes(body.quality)?body.quality:'1');
+      body.hd=String(body.resolution||params.resolution||'').toLowerCase().includes('2k');
+      if(imageUrls[0])body.imageUrl=imageUrls[0];
+      if(imageUrls[1])body.sref=imageUrls[1];
+      for(const key of ['n','resolution','outputFormat','speed'])delete body[key];
+    }else if(endpoint.includes('minimax/h3-image')){
+      body.size=/^\d+x\d+$/.test(aspectRatio)?aspectRatio:'auto';
+      if(endpoint.includes('image-edit'))body.imageUrls=imageUrls.map(imageUrl=>({imageUrl}));
+      for(const key of ['aspectRatio','resolution','quality','outputFormat','speed'])delete body[key];
+    }else if(endpoint.includes('seedream-v5')){
+      if(endpoint.includes('layer-decomposition')){
+        body.resolution=['auto','1k','1.5k','2k'].includes(String(body.quality||body.resolution).toLowerCase())
+          ?String(body.quality||body.resolution).toLowerCase():'auto';
+        if(imageUrls[0])body.imageUrl=imageUrls[0];
+      }else if(/^\d+x\d+$/.test(aspectRatio)){
+        const [width,height]=aspectRatio.split('x').map(Number);
+        body.width=width;body.height=height;
+      }else{
+        body.resolution=normalizedImageResolution(body.resolution||body.quality);
+      }
+      if(endpoint.includes('image-to-image')&&imageUrls.length)body.imageUrls=imageUrls;
+      for(const key of ['aspectRatio','quality','outputFormat','speed'])delete body[key];
+    }else if(endpoint.includes('rhart-image-g-2.6-')){
+      body.size=/^\d+x\d+$/.test(aspectRatio)?aspectRatio:'auto';
+      if((endpoint.includes('/edit')||endpoint.includes('image-to-image'))&&imageUrls.length)body.imageUrls=imageUrls;
+      for(const key of ['aspectRatio','resolution','speed'])delete body[key];
+    }else if(endpoint.includes('rhart-image-g-2.5-')){
+      body.aspectRatio=aspectRatio||'1:1';
+      body.resolution=normalizedImageResolution(body.quality||body.resolution);
+      if((endpoint.includes('/edit')||endpoint.includes('image-to-image'))&&imageUrls.length)body.imageUrls=imageUrls;
+      delete body.speed;
+    }else if(endpoint.includes('rhart-image-n-nb')){
+      body.aspectRatio=aspectRatio||'1:1';
+      body.resolution=normalizedImageResolution(body.quality||body.resolution);
+      if((endpoint.includes('/edit')||endpoint.includes('image-to-image'))&&imageUrls.length)body.imageUrls=imageUrls;
+      for(const key of ['quality','outputFormat','speed'])delete body[key];
+    }else{
+      body.aspectRatio=aspectRatio||'1:1';
+      if((endpoint.includes('/edit')||endpoint.includes('image-to-image'))&&imageUrls.length)body.imageUrls=imageUrls;
+      delete body.speed;
+    }
+    if(!youchuan&&body.n===undefined)body.n=1;
+    for(const key of ['durationSeconds','audio','generateAudio','audioRole','inputMode','title'])delete body[key];
+  }else if(videoEndpoint){
+    if(endpoint.includes('seedance')||endpoint.includes('hailuo-h3')){
+      body.ratio=endpoint.includes('seedance-2.5')&&endpoint.includes('image-to-video')?'adaptive':aspectRatio||'adaptive';
+    }else{
+      body.aspectRatio=aspectRatio||'16:9';
+    }
+    if(endpoint.includes('multimodal')||endpoint.includes('reference-to-video')||endpoint.includes('omni-video')){
+      if(imageUrls.length)body.imageUrls=imageUrls;
+      if(videoUrls.length)body.videoUrls=videoUrls;
+      if(audioUrls.length)body.audioUrls=audioUrls;
+    }
+    if(endpoint.includes('kling-lip-sync/lip-sync-video')){
+      body.audioUrl=audioUrls[0]||body.audioUrl;
+      body.sessionId=params.sessionId;body.faceId=params.faceId;
+      body.soundStartTime=String(params.soundStartTime??'0');
+      body.soundEndTime=String(params.soundEndTime??'1');
+      body.soundInsertTime=String(params.soundInsertTime??'0');
+    }else if(endpoint.includes('motion-control')){
+      body.imageUrl=imageUrls[0];body.videoUrl=videoUrls[0];
+      body.characterOrientation='video';body.keepOriginalSound=params.keepOriginalSound!==false;
+    }else if(endpoint.includes('image-audio-to-video')){
+      body.imageUrl=imageUrls[0];body.audioUrl=audioUrls[0];
+    }else if(endpoint.includes('video-upscaler')){
+      body.videoUrl=videoUrls[0]||body.videoUrl;
+      body.targetResolution=body.targetResolution||'1080p';
+    }else if(endpoint.includes('muse-video')){
+      body.duration='10';body.resolution='720p';body.nsfwCheck=false;
+      body.imageUrls=imageUrls;
+    }
+    if(endpoint.includes('hailuo-h3')){
+      body.resolution=/^(2k|1080p|native1080p|4k)$/i.test(String(body.resolution||''))?'2K':'768P';
+    }
+    if(!endpoint.includes('lip-sync-video')&&!endpoint.includes('motion-control')&&
+        !endpoint.includes('image-audio-to-video')&&!endpoint.includes('video-upscaler')){
+      body.duration=endpoint.includes('muse-video')?'10':duration;
+    }
+    if(!endpoint.includes('kling')&&!endpoint.includes('hailuo-h3')&&
+        !endpoint.includes('lip-sync-video')&&!endpoint.includes('video-upscaler')&&!endpoint.includes('muse-video')){
+      body.generateAudio=params.generateAudio===true||params.audio===true;
+    }
+    if(endpoint.includes('image-to-video')){
+      const firstImage=imageUrls[0]||body.sourceImage;
+      if(endpoint.includes('kling-v4'))body.firstImageUrl=body.firstImageUrl||firstImage;
+      else body.firstFrameUrl=body.firstFrameUrl||firstImage;
+    }
+    if(endpoint.includes('seedance')||endpoint.includes('hailuo-h3'))delete body.aspectRatio;
+    for(const key of ['durationSeconds','audio','audioRole','inputMode','title','sourceImage','lastFrameImage'])delete body[key];
+    for(const key of ['quality','outputFormat','speed'])delete body[key];
+    if(endpoint.includes('hailuo-h3'))delete body.generateAudio;
+  }else if(audioEndpoint){
+    if(endpoint.includes('kling-lip-sync/tts')){
+      body.text=body.prompt||body.text;
+      body.voiceId=params.voiceId||'genshin_klee2';
+      body.voiceLanguage=params.voiceLanguage||'zh';
+      body.voiceSpeed=Number(params.voiceSpeed)||1;
+    }else if(endpoint.includes('text-to-audio/speech')){
+      body.text=body.prompt||body.text;
+      body.voice_id=params.voice_id||'Wise_Woman';
+      body.enable_base64_output=false;
+      body.english_normalization=false;
+    }else if(endpoint.includes('mureka')){
+      body.prompt=body.prompt||body.text;
+      body.n=Number(body.n)||2;
+      if(endpoint.includes('generate-song'))body.lyrics=params.lyrics||body.lyrics||body.prompt;
+    }
+    for(const key of ['aspectRatio','resolution','quality','outputFormat','speed','targetResolution','imageUrls','videoUrls','audioUrls'])delete body[key];
+    if(!endpoint.includes('mureka'))delete body.n;
+    for(const key of ['durationSeconds','audio','generateAudio','audioRole','inputMode','title'])delete body[key];
+  }else if(String(job.modality||'').toUpperCase()==='TEXT'){
+    body.prompt=body.prompt||'';
+    for(const key of ['durationSeconds','audio','generateAudio','audioRole','inputMode','title'])delete body[key];
   }
   return body;
 }
 
+export function canvasGenerationRequest(job){
+  const route=canvasModelRoute(job);
+  return {route,body:generationBody(job,{},route)};
+}
+
 function billingFacts(job,route=canvasModelRoute(job),assetOptions={}){
   const displayText=String(job.modelLabel||job.modelId||'').trim();
-  const body=generationBody(job,assetOptions);
+  const body=generationBody(job,assetOptions,route);
   const input=job.input&&typeof job.input==='object'?job.input:{};
   const params=input.params&&typeof input.params==='object'?input.params:{};
   const video=String(job.modality||'').toUpperCase()==='VIDEO';
@@ -195,7 +318,7 @@ function billingFacts(job,route=canvasModelRoute(job),assetOptions={}){
     const value=params[key]!==undefined?params[key]:body[key];
     if(value!==undefined&&value!=='')facts[key]=key==='aspectRatio'&&video&&value==='auto'?'adaptive':value;
   }
-  if(route.execution!=='rh-minimax-h3-multi'&&
+  if(!route.execution.includes('hailuo-h3')&&
     (body.generateAudio===true||params.generateAudio===true||params.audio===true))facts.generateAudio=true;
   if(Array.isArray(body.imageUrls)&&body.imageUrls.length)facts.referenceImageCount=body.imageUrls.length;
   if(category==='text') {
@@ -307,7 +430,7 @@ export function createCanvasGenerationAdapter({
   }
 
   async function chatCompletion(route,job){
-    const body=generationBody(job);
+    const body=generationBody(job,{},route);
     const base=route.aiSite?llmAiBase:llmCnBase;
     const key=route.aiSite?runningHubAiApiKey:runningHubApiKey;
     const response=await fetchImpl(new URL('chat/completions',`${base.href.replace(/\/+$/,'')}/`),{
@@ -411,7 +534,7 @@ export function createCanvasGenerationAdapter({
     let result=null;
     try{
       const config=runningHubConfig(route);
-      let body={...generationBody(job,assetOptions),clientId:job.jobId};
+      let body={...generationBody(job,assetOptions,route),clientId:job.jobId};
       if(route.text) {
         const chat=await chatCompletion(route,job);
         if(holdId)await billing('settle',{holdId,outcome:'succeeded',reason:'文本生成完成'});

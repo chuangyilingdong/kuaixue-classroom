@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {canvasBillingAliases,canvasExecutionAliases,canvasModelRoute,createCanvasGenerationAdapter} from '../apps/api/canvas-generation.mjs';
+import {canvasBillingAliases,canvasExecutionAliases,canvasGenerationRequest,canvasModelRoute,createCanvasGenerationAdapter} from '../apps/api/canvas-generation.mjs';
 
 test('画布生成经主站报价预扣、RunningHub 执行后结算作品',async()=>{
   const calls=[];
@@ -92,14 +92,47 @@ test('MiniMax-H3 使用正式模型键报价并把自动画幅发送为 adaptive
   assert.equal(displayNameCannotRoute.billingKey,'minimax/hailuo-h3/multimodal-to-video');
 });
 
+test('Seedance 2.0 Mini 多模态使用 RunningHub 正式执行路径',async()=>{
+  const requested=[];
+  const adapter=createCanvasGenerationAdapter({
+    origin:'https://course.example.test',billingSecret:'billing-secret',runningHubApiKey:'rh-key',
+    fetchImpl:async(url)=>{
+      const href=String(url);requested.push(href);
+      if(href.endsWith('/internal/canvas-billing/quote'))return Response.json({points:4,balance:100});
+      if(href.endsWith('/internal/canvas-billing/reserve'))return Response.json({holdId:'hold-mini',status:'reserved'});
+      if(href.endsWith('/openapi/v2/rhart-video/sparkvideo-2.0-mini/multimodal-video'))
+        return Response.json({code:0,data:{taskId:'task-mini',status:'QUEUED'}});
+      if(href.endsWith('/openapi/v2/query'))return Response.json({code:0,data:{taskId:'task-mini',status:'SUCCESS',
+        results:[{videoUrl:'https://cdn.example/mini.mp4'}]}});
+      if(href.endsWith('/internal/canvas-billing/settle'))return Response.json({status:'succeeded'});
+      throw Error(`unexpected request ${href}`);
+    },pollIntervalMs:0,
+  });
+  const job={jobId:'job-mini',userId:'user-1',runId:'run-1',
+    modelId:'aicyld-runninghub::rh-seedance-2.0-mini-multi',
+    modelLabel:'seedance2.0-Mini/多模态视频',modality:'VIDEO',
+    input:{prompt:'小猫跳舞',params:{aspectRatio:'16:9',resolution:'480p',durationSeconds:4,audio:true}}};
+  const quote=await adapter.quoteGeneration(job);
+  assert.equal(quote.executionModelKey,'rhart-video/sparkvideo-2.0-mini/multimodal-video');
+  assert.equal(quote.modelKey,'rhart-video/sparkvideo-2.0-mini/multimodal-video');
+  const result=await adapter.generateOrLookup(job);
+  assert.equal(result.asset.assetUrl,'https://cdn.example/mini.mp4');
+  assert.ok(requested.some(href=>href.endsWith('/openapi/v2/rhart-video/sparkvideo-2.0-mini/multimodal-video')));
+  assert.ok(!requested.some(href=>href.includes('/openapi/v2/rh-seedance-2.0-mini-multi')));
+});
+
 test('全模态渠道模型都拆分为执行键和正式计费键',()=>{
   assert.ok(Object.keys(canvasBillingAliases).length>=52);
-  assert.equal(Object.keys(canvasExecutionAliases).length,11);
+  assert.equal(Object.keys(canvasExecutionAliases).length,Object.keys(canvasBillingAliases).length);
   for(const [model,billingKey] of Object.entries(canvasBillingAliases)){
     const route=canvasModelRoute({modelId:`aicyld-runninghub::${model}`,modelLabel:'自定义名称',modality:'IMAGE'});
-    assert.equal(route.execution,canvasExecutionAliases[model]||model);
+    assert.equal(route.execution,billingKey);
     assert.equal(route.billingKey,billingKey);
   }
+  assert.throws(
+    ()=>canvasModelRoute({modelId:'aicyld-runninghub::rh-unmapped-new-model',modality:'VIDEO'}),
+    /尚未配置 RunningHub 正式执行路径/,
+  );
   for(const [model,key] of [
     ['deepseek/deepseek-v4.1-flash','deepseek/deepseek-v4.1-flash'],
     ['openai/gpt-6.2-sol-saver','openai/gpt-6.2-sol-saver'],
@@ -109,6 +142,31 @@ test('全模态渠道模型都拆分为执行键和正式计费键',()=>{
     assert.equal(route.execution,model);
     assert.equal(route.billingKey,key);
     assert.equal(route.text,true);
+  }
+});
+
+test('全部已发布渠道模型都生成正式执行键兼容的请求体',()=>{
+  assert.equal(Object.keys(canvasBillingAliases).length,52);
+  for(const [model,billingKey] of Object.entries(canvasBillingAliases)){
+    const modality=billingKey.includes('audio')||billingKey.includes('kling-lip-sync/tts')||billingKey.includes('mureka')
+      ?'AUDIO':billingKey.includes('video')?'VIDEO':'IMAGE';
+    const {route,body}=canvasGenerationRequest({
+      modelId:`aicyld-runninghub::${model}`,modelLabel:'渠道模型',modality,
+      input:{prompt:'兼容请求测试',params:{aspectRatio:'16:9',resolution:'1080p',quality:'high',
+        durationSeconds:5,audio:true,lyrics:'测试歌词',voiceId:'test',sessionId:'test',
+        faceId:'test',soundStartTime:'0',soundEndTime:'1',soundInsertTime:'0'}},
+    });
+    assert.equal(route.execution,billingKey);
+    assert.equal(route.billingKey,billingKey);
+    assert.equal(JSON.stringify(body).includes(model),false,`${model} 的执行请求泄漏了渠道键`);
+    assert.equal('durationSeconds' in body,false,`${model} 泄漏了课程内部时长字段`);
+    assert.equal('audioRole' in body,false,`${model} 泄漏了课程内部音频角色字段`);
+    if(billingKey.includes('hailuo-h3'))assert.equal('generateAudio' in body,false);
+    if(billingKey.includes('mureka'))assert.equal(body.n,2);
+    if(billingKey.includes('kling-lip-sync/tts')||billingKey.includes('text-to-audio/speech')){
+      assert.equal(typeof body.text,'string');
+      assert.equal(body.text,'兼容请求测试');
+    }
   }
 });
 

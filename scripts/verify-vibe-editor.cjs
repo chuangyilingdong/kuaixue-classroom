@@ -44,6 +44,7 @@ app.whenReady().then(async () => {
         token: 'x'.repeat(40),
         expiresAt: Date.now() + 60000,
         modelIds: [modelId],
+        usage: {limit: 10, used: 83, remaining: 0},
       },
       userId: 'local-editor-check-user',
       resourceRoot: process.env.KX_RESOURCE_ROOT || 'E:/快学课堂vibe/kuaixue-desktop/resources',
@@ -77,6 +78,18 @@ app.whenReady().then(async () => {
       resources: await frame.executeJavaScript('performance.getEntriesByType("resource").map(item => item.name)').catch(error => String(error)),
     }));
     await waitFor(() => frame.executeJavaScript('document.body.innerText.includes("向小灵提问")'), '编辑器');
+    await waitFor(
+      () => frame.executeJavaScript('Boolean(document.querySelector("[data-kuaixue-vibe-quota]"))'),
+      'Vibe 额度',
+    );
+    const quota = await frame.executeJavaScript(`(() => {
+      const badge = document.querySelector('[data-kuaixue-vibe-quota]');
+      return {
+        text: badge?.textContent?.trim() || '',
+        title: badge?.getAttribute('title') || '',
+        ariaLabel: badge?.getAttribute('aria-label') || '',
+      };
+    })()`);
     const editor = await frame.executeJavaScript(`(() => {
       const candidates = [...document.querySelectorAll('textarea,input,[contenteditable="true"],[role="textbox"]')];
       return candidates.map((element, index) => {
@@ -128,6 +141,10 @@ app.whenReady().then(async () => {
     window.webContents.insertText('测试输入');
     await delay(300);
     const typedText = await frame.executeJavaScript(`document.querySelector('[role="textbox"][contenteditable="true"]')?.innerText || ''`);
+    const sendControl = await frame.executeJavaScript(`(() => {
+      const button = document.querySelector('[data-testid="v4-composer-send"]');
+      return button ? {found:true,disabled:Boolean(button.disabled),ariaDisabled:button.getAttribute('aria-disabled')} : {found:false};
+    })()`);
     const commandText = await frame.executeJavaScript(`(() => {
       const editor = document.querySelector('[role="textbox"][contenteditable="true"]');
       if (!editor) return {text:'',html:'',command:false};
@@ -181,6 +198,8 @@ app.whenReady().then(async () => {
       ok: true,
       frameUrl: host.frameUrl,
       editor,
+      quota,
+      sendControl,
       buttonCandidates,
       editorHit,
       typedText,
@@ -192,7 +211,7 @@ app.whenReady().then(async () => {
       afterOpen,
       screenshot: screenshotPath,
     }, null, 2) + '\n');
-    console.log(JSON.stringify({ok:true, editor, workspaceMenu, menu, screenshot:screenshotPath}));
+    console.log(JSON.stringify({ok:true, quota, sendControl, editor, workspaceMenu, menu, screenshot:screenshotPath}));
   } catch (error) {
     writeFileSync(reportPath, JSON.stringify({ok:false, error:error.stack || error.message}, null, 2) + '\n');
     console.error(error);

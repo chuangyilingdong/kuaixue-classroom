@@ -13,13 +13,21 @@ type CourseWebPlatform = IPlatformService & {
 };
 
 let dialogRequestId = 0;
+type CourseUsage = {limit:number;used:number;remaining:number|null};
+let courseUsage: CourseUsage | null = null;
 const pendingClassroomDialogs = new Map<string, {
   resolve: (paths: string[]) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 }>();
 window.addEventListener('message', event => {
-  if (event.source !== window.parent || event.data?.type !== 'kuaixue-classroom-paths-result') return;
+  if (event.source !== window.parent) return;
+  if (event.data?.type === 'kuaixue-vibe-usage') {
+    const next = normalizeCourseUsage(event.data.usage?.limit,event.data.usage?.used);
+    if (next) courseUsage = next;
+    return;
+  }
+  if (event.data?.type !== 'kuaixue-classroom-paths-result') return;
   const request = pendingClassroomDialogs.get(String(event.data.requestId || ''));
   if (!request) return;
   pendingClassroomDialogs.delete(String(event.data.requestId));
@@ -56,7 +64,22 @@ type ClassroomWindowMessage = {
   directory?:string;
   file?:string;
   requestId?:string;
+  usage?:{limit?:number;used?:number;remaining?:number|null};
 };
+
+function normalizeCourseUsage(limitValue: unknown, usedValue: unknown): CourseUsage | null {
+  const limit = Number(limitValue);
+  const used = Number(usedValue);
+  if (!Number.isSafeInteger(limit) || limit < 0 || !Number.isSafeInteger(used) || used < 0) return null;
+  return {limit,used,remaining:limit===0?null:Math.max(0,limit-used)};
+}
+
+function readCourseUsage(source: URLSearchParams): CourseUsage | null {
+  const limit = source.get('usageLimit');
+  const used = source.get('usageUsed');
+  if (limit === null || used === null) return null;
+  return normalizeCourseUsage(limit,used);
+}
 
 function postToClassroom(message: ClassroomWindowMessage) {
   window.parent.postMessage(message, '*');
@@ -178,7 +201,14 @@ function mountCourseWorkspaceActions() {
 
 function createWebPlatform(presets, openCourseHtmlPreview): CourseWebPlatform {
   return {
-    classroom: {openCourseHtmlPreview, getPresets:async () => presets,getSnapshot:async () => null,
+    classroom: {openCourseHtmlPreview, getPresets:async () => presets,
+      getSnapshot:async () => courseUsage ? {
+        quota:{
+          limit:courseUsage.limit===0?null:courseUsage.limit,
+          used:courseUsage.used,
+          remaining:courseUsage.remaining,
+        },
+      } : null,
       onClassroomEnded:() => () => {}, claimClassroomEndedAutoSubmit:async () => false,
       completeClassroomEndedAutoSubmit:async () => {},prepareWorkPreview:async () => null,
       logout:async () => {throw Error('请使用快学账号菜单');},scanWorkspaceFiles:async () => {throw Error('使用快学课程工程');},
@@ -318,6 +348,7 @@ function reportToClassroom(message: string) {
 async function enterCourse() {
   const runId = launch.get('run');
   const ticket = launch.get('ticket');
+  courseUsage = readCourseUsage(launch);
   (window as typeof window & {__kuaixueInitialWorkspace?:string}).__kuaixueInitialWorkspace='';
   if (!ticket || !runId || window.parent === window) throw Error();
   const result = await fetch('/kuaixue/runtime/exchange', {
