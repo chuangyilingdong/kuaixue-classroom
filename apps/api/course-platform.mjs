@@ -220,7 +220,7 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
     }
     const remaining=Number.isSafeInteger(grant.usageRemaining)?grant.usageRemaining:null;
     if(!Number.isSafeInteger(grant.usageLimit)||grant.usageLimit<0||
-        !Number.isSafeInteger(grant.usageUsed)||grant.usageUsed<0||grant.usageUsed>grant.usageLimit||
+        !Number.isSafeInteger(grant.usageUsed)||grant.usageUsed<0||
         (grant.usageLimit>0&&(!Number.isSafeInteger(remaining)||remaining<0||remaining>grant.usageLimit))) {
       reject(503,'本机模型使用额度无效');
     }

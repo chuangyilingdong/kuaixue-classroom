@@ -29,15 +29,17 @@ options.plugins.unshift({name:'upstream-compatibility',setup(builder){
   builder.onLoad({filter:/zcodeAgentProcessManager\.ts$/},async args=>{
     let source=await import('node:fs/promises').then(fs=>fs.readFile(args.path,'utf8'));
     const pattern=/const windowsRuntime\s*=\s*process\.platform === "win32"\s*\?\s*await spawnWindowsRuntimeHost\(\{[\s\S]*?\}\)\s*:\s*undefined;/;
-    if(!pattern.test(source))throw Error('ZCode Windows runtime host wiring changed; update the course adapter');
-    source=source.replace(pattern,'const windowsRuntime = undefined;');
+    // Newer ZCode versions removed this dedicated runtime-host branch. Only patch
+    // the legacy shape; an absent marker is the supported current layout.
+    if(pattern.test(source))source=source.replace(pattern,'const windowsRuntime = undefined;');
     return {contents:source,loader:'ts'};
   });
   builder.onLoad({filter:/zcodeStdioTransport\.ts$/},async args=>{
     let source=await import('node:fs/promises').then(fs=>fs.readFile(args.path,'utf8'));
     const marker=/if \(process\.platform === "win32"\)\r?\n\s*throw new Error\("Windows CLI cleanup requires a runtime Job owner"\);/;
-    if(!marker.test(source))throw Error('ZCode Windows stdio cleanup changed; update the course adapter');
-    source=source.replace(marker,'// The course runtime owns a private agent and uses the process-tree fallback below.');
+    // Current ZCode owns Windows process cleanup internally. Keep the legacy
+    // compatibility patch only when that guard is still present.
+    if(marker.test(source))source=source.replace(marker,'// The course runtime owns a private agent and uses the process-tree fallback below.');
     return {contents:source,loader:'ts'};
   });
 }});
@@ -75,7 +77,17 @@ if(!runtimeOnly){
   }
   await mkdir(join(runtime,'node_modules'),{recursive:true});
   await cp(playwrightSource,join(runtime,'node_modules','playwright-core'),{recursive:true,dereference:true});
-  const keyringRoot=join(root,'node_modules','@napi-rs');
+  const sourceKeyringRoot=join(root,'node_modules','@napi-rs');
+  const keyringRoot=await access(join(sourceKeyringRoot,'keyring')).then(()=>sourceKeyringRoot,async()=>{
+    for(const fallback of [
+      join(resolve('release/vibe-local-runtime-candidate'),'node_modules','@napi-rs'),
+      join(resolve('release/vibe-local-runtime'),'node_modules','@napi-rs'),
+    ]) {
+      if(await access(join(fallback,'keyring')).then(()=>true,()=>false))return fallback;
+    }
+    throw Error('找不到 @napi-rs/keyring 构建依赖');
+  });
+  await access(join(keyringRoot,'keyring'));
   await cp(join(keyringRoot,'keyring'),join(runtime,'node_modules','@napi-rs','keyring'),{recursive:true,dereference:true});
   for(const name of await readdir(keyringRoot)){
     if(!name.startsWith('keyring-'))continue;

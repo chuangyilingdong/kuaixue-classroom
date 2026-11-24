@@ -58,11 +58,9 @@ test('Vibe 使用次数嵌入上下文控件左侧并随外层额度刷新',()=>
   const run=readFileSync(new URL('../src/ui/CourseRun.jsx',import.meta.url),'utf8');
   const entry=readFileSync(new URL('../integrations/vibecoding/course-entry.tsx',import.meta.url),'utf8');
   const local=readFileSync(new URL('../electron/course-local-vibe.cjs',import.meta.url),'utf8');
-  assert.doesNotMatch(run,/className={`course-vibe-usage/);
-  assert.match(run,/type:'kuaixue-vibe-usage'/);
-  assert.match(entry,/chat-context-usage-trigger/);
-  assert.match(entry,/kuaixue-vibe-usage-context/);
-  assert.match(entry,/type !== 'kuaixue-vibe-usage'/);
+  assert.doesNotMatch(run,/type:'kuaixue-vibe-usage'/);
+  assert.match(run,/course-vibe-usage-caption/);
+  assert.doesNotMatch(entry,/mountCourseUsage/);
   assert.match(local,/usageLimit:String\(gateway\.usage\.limit\)/);
 });
 

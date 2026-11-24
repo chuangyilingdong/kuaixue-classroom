@@ -74,7 +74,6 @@ export function createCourseClient({ base, vibeOrigin, parentOrigin, fetchImpl =
           !Array.isArray(gateway.modelIds) || !gateway.modelIds.length ||
           !gateway.usage || !Number.isSafeInteger(gateway.usage.limit) || gateway.usage.limit < 0 ||
           !Number.isSafeInteger(gateway.usage.used) || gateway.usage.used < 0 ||
-          gateway.usage.used > gateway.usage.limit ||
           (gateway.usage.limit > 0 && (!Number.isSafeInteger(gateway.usage.remaining) ||
             gateway.usage.remaining < 0 || gateway.usage.remaining > gateway.usage.limit))) {
         throw new Error('本机模型授权无效。');

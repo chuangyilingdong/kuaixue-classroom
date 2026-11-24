@@ -52,9 +52,90 @@ function profileScore(directory) {
   return score;
 }
 
-async function prepareCourseProfile(profiles,runId,profile) {
+const runtimeFingerprintByRoot=new Map();
+function courseRuntimeFingerprint(resourceRoot) {
+  const key=path.resolve(resourceRoot);
+  const cached=runtimeFingerprintByRoot.get(key);
+  if(cached)return cached;
+  const hash=createHash('sha256');
+  for(const relative of ['vibe-local-runtime/zcode.cjs','vibe-local-runtime/course-runtime.mjs']) {
+    hash.update(relative);
+    hash.update(fs.readFileSync(path.join(key,relative)));
+  }
+  const value=hash.digest('hex');
+  runtimeFingerprintByRoot.set(key,value);
+  return value;
+}
+
+async function reconcileCourseProfileRuntime(profile,resourceRoot) {
+  if(!profile||!resourceRoot)return false;
+  const fingerprint=courseRuntimeFingerprint(resourceRoot);
+  const marker=path.join(profile,'.kuaixue-runtime.json');
+  let previous=null;
+  try {previous=JSON.parse(await fsp.readFile(marker,'utf8'))?.fingerprint||null;} catch {}
+  if(previous===fingerprint)return false;
+  const versionDir=path.join(profile,'.zcode','v2');
+  const indexFiles=['tasks-index.sqlite','tasks-index.sqlite-wal','tasks-index.sqlite-shm'];
+  const existing=[];
+  for(const name of indexFiles) {
+    const file=path.join(versionDir,name);
+    if(await fsp.stat(file).then(value=>value.isFile(),()=>false))existing.push(file);
+  }
+  if(existing.length) {
+    const archive=path.join(profile,'.zcode','legacy-task-index',
+      `${Date.now()}-${String(previous||'unknown').slice(0,12)}`);
+    await fsp.mkdir(archive,{recursive:true,mode:0o700});
+    for(const file of existing)await fsp.rename(file,path.join(archive,path.basename(file)));
+  }
+  await fsp.writeFile(marker,JSON.stringify({fingerprint,updatedAt:new Date().toISOString()}),{mode:0o600});
+  return existing.length>0;
+}
+
+async function legacyTaskIds(profile) {
+  const root=path.join(profile,'.zcode','legacy-task-index');
+  let entries=[];
+  try {entries=(await fsp.readdir(root,{withFileTypes:true})).filter(entry=>entry.isDirectory());} catch {return [];}
+  const ids=new Set();
+  for(const entry of entries) {
+    const filename=path.join(root,entry.name,'tasks-index.sqlite');
+    if(!await fsp.stat(filename).then(value=>value.isFile(),()=>false))continue;
+    try {
+      const db=new DatabaseSync(filename,{readOnly:true});
+      try {
+        const hasTasks=db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='table' AND name='tasks'").get()?.n;
+        if(hasTasks)for(const row of db.prepare('SELECT task_id FROM tasks').all())if(row.task_id)ids.add(row.task_id);
+      } finally {db.close();}
+    } catch {}
+  }
+  return [...ids];
+}
+
+async function hideLegacyTasks(profile) {
+  const ids=await legacyTaskIds(profile);
+  if(!ids.length)return 0;
+  const filename=path.join(profile,'.zcode','v2','tasks-index.sqlite');
+  if(!await fsp.stat(filename).then(value=>value.isFile(),()=>false))return 0;
+  try {
+    const db=new DatabaseSync(filename);
+    try {
+      db.exec('PRAGMA busy_timeout=2000');
+      const hasTasks=db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='table' AND name='tasks'").get()?.n;
+      if(!hasTasks)return 0;
+      const statement=db.prepare('UPDATE tasks SET archived=1, deleted=1 WHERE task_id=?');
+      let changed=0;
+      for(const id of ids)changed+=Number(statement.run(id).changes||0);
+      return changed;
+    } finally {db.close();}
+  } catch {return 0;}
+}
+
+async function prepareCourseProfile(profiles,runId,profile,allowLegacyMigration=true) {
   const exists=await fsp.stat(profile).then(value=>value.isDirectory(),()=>false);
   if(exists)return profile;
+  if(!allowLegacyMigration) {
+    await fsp.mkdir(profile,{recursive:true,mode:0o700});
+    return profile;
+  }
   let candidates=[];
   try {
     candidates=(await fsp.readdir(profiles,{withFileTypes:true}))
@@ -211,7 +292,10 @@ async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
     await new Promise(resolve=>reserve.close(resolve));
     const hostOrigin=`http://${loopback}:${runtimePort}`;
     await fsp.mkdir(profiles,{recursive:true,mode:0o700});
-    profile=await prepareCourseProfile(profiles,run.id,path.join(profiles,hostKey(context)));
+    profile=await prepareCourseProfile(
+      profiles,run.id,path.join(profiles,`${hostKey(context)}-v2`),false,
+    );
+    await reconcileCourseProfileRuntime(profile,resourceRoot);
     if(process.env.KUAIXUE_QA_RUNTIME==='1') console.error('本机 VibeCoding 配置目录',profile);
     await provisionCourseProvider({
       profile,context,
@@ -244,6 +328,7 @@ async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
       close();void discardProviderCredential();
     });
     await ready(hostOrigin,token,child);
+    await hideLegacyTasks(profile);
     const accept=createScopedSocketAcceptor({WebSocketServer:WebSocket.WebSocketServer,WebSocket,checkAccess,
       resolveHost:async()=>({...context,token,origin:hostOrigin.replace('http:','ws:')})});
     web.on('upgrade',async(req,socket,head)=>{
@@ -318,4 +403,4 @@ async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
   } catch(error){close();throw error;}
 }
 
-module.exports={courseWorkspaceName,openCourseLocalVibe,prepareCourseProfile,profileScore,runtimePythonDirectories,withRuntimeTools};
+module.exports={courseRuntimeFingerprint,courseWorkspaceName,hideLegacyTasks,legacyTaskIds,openCourseLocalVibe,prepareCourseProfile,profileScore,reconcileCourseProfileRuntime,runtimePythonDirectories,withRuntimeTools};

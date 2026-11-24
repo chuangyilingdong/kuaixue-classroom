@@ -51,25 +51,12 @@ function workspaceFileUrl(path: string) {
   return url.href;
 }
 
-type CourseUsage = {limit:number;used:number;remaining:number|null};
-
 type ClassroomWindowMessage = {
   type:string;
   directory?:string;
   file?:string;
   requestId?:string;
 };
-
-function readCourseUsage(source: URLSearchParams): CourseUsage | null {
-  const limit = Number(source.get('usageLimit'));
-  const used = Number(source.get('usageUsed'));
-  if (!Number.isSafeInteger(limit) || limit < 0 || !Number.isSafeInteger(used) || used < 0 || used > limit) return null;
-  return {limit,used,remaining:limit===0?null:Math.max(0,limit-used)};
-}
-
-function usageLabel(usage: CourseUsage) {
-  return usage.limit===0?'Vibe 不限':`Vibe ${usage.used}/${usage.limit}`;
-}
 
 function postToClassroom(message: ClassroomWindowMessage) {
   window.parent.postMessage(message, '*');
@@ -116,74 +103,6 @@ function openCourseHtmlInClassroom(url: string) {
 (globalThis as typeof globalThis & {
   __kuaixueOpenCourseHtmlPreview?: (url: string) => boolean;
 }).__kuaixueOpenCourseHtmlPreview = openCourseHtmlInClassroom;
-
-function mountCourseUsage(initial: CourseUsage | null) {
-  let usage = initial;
-  const style = document.createElement('style');
-  style.dataset.kuaixueVibeUsageStyle = 'true';
-  style.textContent = `
-    .kuaixue-vibe-usage-context::before {
-      content: attr(data-kuaixue-vibe-usage);
-      display: inline-flex;
-      align-items: center;
-      height: 22px;
-      padding: 0 7px;
-      border: 1px solid var(--input-border, rgb(255 255 255 / 16%));
-      border-radius: 999px;
-      color: var(--foreground-subtle, currentColor);
-      background: color-mix(in srgb, var(--input, #1b1d21) 82%, transparent);
-      font-size: 10px;
-      font-weight: 500;
-      line-height: 20px;
-      letter-spacing: .01em;
-      white-space: nowrap;
-      pointer-events: none;
-    }
-    .kuaixue-vibe-usage-context[data-kuaixue-vibe-empty="true"]::before {
-      border-color: rgb(255 120 120 / 45%);
-      color: #ffb4b4;
-    }
-  `;
-  document.head.append(style);
-
-  function sync() {
-    for (const trigger of document.querySelectorAll<HTMLElement>('[data-testid="chat-context-usage-trigger"]')) {
-      const wrapper = trigger.parentElement;
-      if (!wrapper) continue;
-      wrapper.classList.add('kuaixue-vibe-usage-context');
-      if (usage) {
-        const title = `本课程 VibeCoding 发送次数：已用 ${usage.used}${usage.limit===0?'，不限次数':` / ${usage.limit}`}`;
-        wrapper.dataset.kuaixueVibeUsage = usageLabel(usage);
-        wrapper.dataset.kuaixueVibeEmpty = String(usage.limit>0&&usage.remaining===0);
-        wrapper.title = title;
-        wrapper.setAttribute('aria-label', title);
-      } else {
-        delete wrapper.dataset.kuaixueVibeUsage;
-        delete wrapper.dataset.kuaixueVibeEmpty;
-        wrapper.removeAttribute('title');
-        wrapper.removeAttribute('aria-label');
-        wrapper.classList.remove('kuaixue-vibe-usage-context');
-      }
-    }
-  }
-
-  const observer = new MutationObserver(sync);
-  observer.observe(document.documentElement, {childList:true,subtree:true,attributes:true,attributeFilter:['class']});
-  window.addEventListener('message', event => {
-    if (event.source !== window.parent || event.data?.type !== 'kuaixue-vibe-usage') return;
-    const next = event.data.usage;
-    if (!Number.isSafeInteger(next?.limit) || next.limit < 0 ||
-        !Number.isSafeInteger(next?.used) || next.used < 0 || next.used > next.limit) return;
-    usage = {
-      limit:next.limit,
-      used:next.used,
-      remaining:next.limit===0?null:Number.isSafeInteger(next.remaining)?next.remaining:Math.max(0,next.limit-next.used),
-    };
-    sync();
-  });
-  sync();
-  return sync;
-}
 
 function mountCourseWorkspaceActions() {
   let lastWorkspace = '';
@@ -399,7 +318,6 @@ function reportToClassroom(message: string) {
 async function enterCourse() {
   const runId = launch.get('run');
   const ticket = launch.get('ticket');
-  const initialUsage = readCourseUsage(launch);
   (window as typeof window & {__kuaixueInitialWorkspace?:string}).__kuaixueInitialWorkspace='';
   if (!ticket || !runId || window.parent === window) throw Error();
   const result = await fetch('/kuaixue/runtime/exchange', {
@@ -450,7 +368,6 @@ async function enterCourse() {
       restoreSession allowOpenWorkspace
       supportsSettings={false} preferDirectoryBrowser={false} supportsEmbeddedBrowser={false} allowRemoteWorkspace={false} />
   </ZCodeIntlProvider></AppErrorBoundary>);
-  mountCourseUsage(initialUsage);
   mountCourseWorkspaceActions();
 }
 root.render(<p role="status">正在打开课程工作区…</p>);

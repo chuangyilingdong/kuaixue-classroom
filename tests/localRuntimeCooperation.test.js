@@ -25,6 +25,7 @@ async function body(req){
 test('课程服务校验权益后调用主站模型授权和快照内部接口',async t=>{
   const dir=mkdtempSync(join(tmpdir(),'kx-runtime-cooperation-'));
   let snapshot=null,grantRequest=null,grantModelIds=null;
+  let providerGrantUsage={usageLimit:5,usageUsed:2,usageRemaining:3};
   const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
   const internal=createServer(async(req,res)=>{
     if(req.headers['x-kuaixue-internal-secret']!=='fixture-internal-secret')return res.writeHead(403).end();
@@ -33,7 +34,7 @@ test('课程服务校验权益后调用主站模型授权和快照内部接口',
       res.writeHead(200,{'Content-Type':'application/json'});
       return res.end(JSON.stringify({data:{baseUrl:'https://aicyld.com.cn/api/kuaixue-runtime/v1',
         token:'short-lived-course-token',modelIds:grantModelIds||grantRequest.modelIds,expiresAt:Date.now()+60000,
-        usageLimit:5,usageUsed:2,usageRemaining:3}}));
+        ...providerGrantUsage}}));
     }
     if(req.method==='POST'&&req.url==='/internal/kuaixue/snapshots'){
       const bytes=await body(req);
@@ -104,6 +105,14 @@ test('课程服务校验权益后调用主站模型授权和快照内部接口',
   const badGrant=await fetch(`${apiOrigin}/api/v1/course-runs/local-runtime`,{method:'POST',headers,
     body:JSON.stringify({id:run.id})});
   assert.equal(badGrant.status,503);
+
+  grantModelIds=null;
+  providerGrantUsage={usageLimit:10,usageUsed:83,usageRemaining:0};
+  const exhausted=await fetch(`${apiOrigin}/api/v1/course-runs/local-runtime`,{method:'POST',headers,
+    body:JSON.stringify({id:run.id})});
+  assert.equal(exhausted.status,200);
+  assert.deepEqual((await exhausted.json()).data.modelGateway.usage,{limit:10,used:83,remaining:0});
+  providerGrantUsage={usageLimit:5,usageUsed:2,usageRemaining:3};
 
   const workspace=join(dir,'workspace');mkdirSync(join(workspace,'src'),{recursive:true});
   writeFileSync(join(workspace,'index.html'),'<!doctype html><h1>快照</h1>');
