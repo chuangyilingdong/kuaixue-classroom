@@ -27,7 +27,8 @@ test('作品预览服务相对资源、目录和越界路径',async t=>{
   await writeFile(join(workspace,'assets','app.js'),'document.body.dataset.ready="yes";');
   const server=createServer((req,res)=>{
     const url=new URL(req.url,'http://127.0.0.1');
-    void servePreview({hostRoot:root,context,pathname:url.pathname,publicPath:`/preview${url.pathname}`,req,res});
+    void servePreview({hostRoot:root,context,pathname:url.pathname,publicPath:`/preview${url.pathname}`,req,res,
+      frameAncestors:'kuaixue://classroom http://127.0.0.1:1234'});
   });
   server.listen(0,'127.0.0.1');await once(server,'listening');
   t.after(async()=>{await new Promise(resolve=>server.close(resolve));await rm(root,{recursive:true,force:true});});
@@ -35,7 +36,8 @@ test('作品预览服务相对资源、目录和越界路径',async t=>{
   const page=await request(origin,'/');
   assert.equal(page.status,200);
   assert.match(page.body.toString(),/assets\/app\.js/);
-  assert.match(page.headers['content-security-policy'],/frame-ancestors 'self'/);
+  assert.match(page.headers['content-security-policy'],
+    /frame-ancestors 'self' kuaixue:\/\/classroom http:\/\/127\.0\.0\.1:1234/);
   assert.equal(page.headers['access-control-allow-origin'],'*');
   const script=await request(origin,'/assets/app.js');
   assert.equal(script.status,200);

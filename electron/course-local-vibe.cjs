@@ -151,7 +151,7 @@ async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
             const claimed=await broker.claimPreview(preview[1]);
             return await servePreview({hostRoot,context:claimed,pathname:preview[2]||'/',
               publicPath:`/kuaixue/runtime/preview/${preview[1]}${preview[2]||'/'}`,req,res,
-              workspaceRoot:workspace,frameAncestors:origin});
+              workspaceRoot:workspace,frameAncestors:`kuaixue://classroom ${origin}`});
           } catch {res.writeHead(403);return res.end();}
         }
         const prefix='/kuaixue/workbench/';
