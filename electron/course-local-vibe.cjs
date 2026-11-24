@@ -161,6 +161,7 @@ async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
         if(relative.startsWith('..')||path.isAbsolute(relative))throw Error();
         const content=await fsp.readFile(file);
         res.setHeader('Content-Type',mime[path.extname(name).slice(1)]||'application/octet-stream');
+        res.setHeader('Cache-Control',path.extname(name)==='.html'?'no-store':'public, max-age=31536000, immutable');
         res.setHeader('Content-Security-Policy',`connect-src 'self' ${origin.replace('http:','ws:')}; object-src 'none'; form-action 'none'; base-uri 'self'`);
         res.end(content);
       } catch {if(!res.headersSent)res.writeHead(403);res.end();}

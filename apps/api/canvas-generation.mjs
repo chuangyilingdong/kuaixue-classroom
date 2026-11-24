@@ -258,7 +258,7 @@ export function createCanvasGenerationAdapter({
   maxMirrorAssetBytes=ASSET_MIRROR_MAX_BYTES,
   fetchImpl=fetch,
   pollIntervalMs=2000,
-  generationTimeoutMs=300000,
+  generationTimeoutMs=480000,
 }={}){
   if(!origin||!billingSecret||!runningHubApiKey)throw Error('画布生成适配配置不完整');
   const mainSite=new URL(origin);
@@ -400,13 +400,15 @@ export function createCanvasGenerationAdapter({
     return {quoteId:job.jobId,points:quote.points,expiresAt:Date.now()+5*60*1000,modelKey:facts.modelKey,executionModelKey:route.execution,balance:quote.balance};
   }
 
-  async function generateOrLookup(job){
+  async function generateOrLookup(job,_quote,{providerTaskId='',onProviderTask=null}={}){
     const route=canvasModelRoute(job);
     const facts=billingFacts(job,route,assetOptions);
     const reservation=await billing('reserve',{
       userId:job.userId,idempotencyKey:job.jobId,taskId:job.jobId,projectId:job.runId,facts,
     });
     const holdId=reservation?.holdId||'';
+    let taskId=String(providerTaskId||job.providerTaskId||'').trim();
+    let result=null;
     try{
       const config=runningHubConfig(route);
       let body={...generationBody(job,assetOptions),clientId:job.jobId};
@@ -417,34 +419,56 @@ export function createCanvasGenerationAdapter({
           asset:{text:chat.text,metadata:{taskId:'',text:chat.text}}};
       }
       body=await mirrorGenerationAssets(body,config);
-      let result=await runningHub(route.execution,body,config);
-      const taskId=String(result?.taskId||'');
-      if(!taskId){
-        const upstream=result?.__kuaixueResponse||{};
-        console.error('[canvas-generation] RunningHub task not created',JSON.stringify({
-          model:route.execution,httpStatus:upstream.status,code:upstream.code,
-          message:upstream.message,detail:failureDetail(result),
-          dataKeys:result&&typeof result==='object'?Object.keys(result).slice(0,30):[],
-        }));
-        const detail=failureDetail(result);
-        throw Object.assign(Error(detail?`RunningHub 未返回任务编号：${detail}`:'RunningHub 未返回任务编号'),{definitive:true});
+      if(taskId){
+        console.error('[canvas-generation] resume',JSON.stringify({jobId:job.jobId,taskId,model:route.execution}));
+        result=await runningHub('query',{taskId},config,30000);
+      }else{
+        result=await runningHub(route.execution,body,config);
+        taskId=String(result?.taskId||'').trim();
+        if(!taskId){
+          const upstream=result?.__kuaixueResponse||{};
+          console.error('[canvas-generation] RunningHub task not created',JSON.stringify({
+            model:route.execution,httpStatus:upstream.status,code:upstream.code,
+            message:upstream.message,detail:failureDetail(result),
+            dataKeys:result&&typeof result==='object'?Object.keys(result).slice(0,30):[],
+          }));
+          const detail=failureDetail(result);
+          throw Object.assign(Error(detail?`RunningHub 未返回任务编号：${detail}`:'RunningHub 未返回任务编号'),{definitive:true});
+        }
+        if(onProviderTask)await onProviderTask(taskId);
+        console.error('[canvas-generation] task created',JSON.stringify({jobId:job.jobId,taskId,model:route.execution}));
       }
       let status=String(result?.status||'QUEUED').toUpperCase();
+      let lastLoggedStatus=status;
       const started=Date.now();
       while(!['SUCCESS','FAILED'].includes(status)){
         if(Date.now()-started>=generationTimeoutMs)throw Error('画布生成超时，费用将在对账后处理');
         await sleep(pollIntervalMs);
         result=await runningHub('query',{taskId},config,30000);
         status=String(result?.status||'').toUpperCase();
+        if(status!==lastLoggedStatus){
+          console.error('[canvas-generation] task status',JSON.stringify({jobId:job.jobId,taskId,status}));
+          lastLoggedStatus=status;
+        }
       }
-      if(status==='FAILED')throw Error(result?.errorMessage||result?.failedReason?.exceptionMessage||'RunningHub 生成失败');
+      if(status==='FAILED')throw Object.assign(
+        Error(result?.errorMessage||result?.failedReason?.exceptionMessage||'RunningHub 生成失败'),
+        {definitive:true,providerTerminal:true},
+      );
       const asset=resultAsset({...result,taskId},job);
       const usage=result?.usage||{};
       const actualCostCny=Number(usage.consumeMoney||usage.thirdPartyConsumeMoney||0);
       if(holdId)await billing('settle',{holdId,outcome:'succeeded',actualCostCny:actualCostCny>0?actualCostCny:undefined,reason:'画布生成完成'});
       return {jobId:job.jobId,status:'settled',transactionId:holdId||`free-${job.jobId}`,asset};
     }catch(error){
-      if(holdId)await billing('release',{holdId,reason:error.message||'画布生成失败'}).catch(()=>{});
+      // Once RunningHub accepted a task, a polling/transport timeout must not
+      // release the hold. A retry resumes this taskId and can still settle it.
+      const canRelease=!taskId||error?.definitive===true||error?.providerTerminal===true;
+      if(holdId&&canRelease)await billing('release',{holdId,reason:error.message||'画布生成失败'}).catch(()=>{});
+      console.error('[canvas-generation] failed',JSON.stringify({
+        jobId:job.jobId,taskId:taskId||null,model:route.execution,
+        releaseRequested:Boolean(holdId&&canRelease),message:String(error?.message||error).slice(0,500),
+      }));
       throw error;
     }
   }

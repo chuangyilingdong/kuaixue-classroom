@@ -30,12 +30,15 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
       revision INTEGER NOT NULL, completed TEXT NOT NULL, canvas TEXT, UNIQUE(user,version));
     CREATE TABLE IF NOT EXISTS kx_workspaces_saved (run TEXT NOT NULL, mode TEXT NOT NULL, PRIMARY KEY(run,mode));
     CREATE TABLE IF NOT EXISTS kx_generation (id TEXT PRIMARY KEY, run TEXT NOT NULL, node TEXT NOT NULL, user TEXT NOT NULL,
-      input TEXT NOT NULL, quote TEXT NOT NULL, status TEXT NOT NULL, result TEXT);
+      input TEXT NOT NULL, quote TEXT NOT NULL, status TEXT NOT NULL, result TEXT, provider_task TEXT);
     CREATE TABLE IF NOT EXISTS kx_assets (id TEXT PRIMARY KEY, user TEXT NOT NULL, run TEXT NOT NULL,
       name TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL, kind TEXT NOT NULL, object_key TEXT NOT NULL,
       created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
     CREATE UNIQUE INDEX IF NOT EXISTS kx_pending_node ON kx_generation(run,node) WHERE status='submitted';
     CREATE TABLE IF NOT EXISTS kx_audit (actor TEXT NOT NULL, action TEXT NOT NULL, version TEXT NOT NULL, at TEXT DEFAULT CURRENT_TIMESTAMP);`);
+  if(!db.prepare('PRAGMA table_info(kx_generation)').all().some(column=>column.name==='provider_task'))
+    db.exec('ALTER TABLE kx_generation ADD COLUMN provider_task TEXT');
+  const inFlightGenerations=new Map();
   function transaction(fn) {
     db.exec('BEGIN IMMEDIATE');
     try {const value = fn(); db.exec('COMMIT'); return value;}
@@ -280,7 +283,8 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
     const offer = await quoteGeneration(job);
     if (!offer?.quoteId || !Number.isSafeInteger(offer.points) || offer.points < 0 || !Number.isSafeInteger(offer.expiresAt) || offer.expiresAt <= Date.now()) reject(503,'报价暂不可用');
     if (preview === true) return {id:null,points:offer.points,modelId,expiresAt:offer.expiresAt,preview:true};
-    db.prepare("INSERT INTO kx_generation VALUES(?,?,?,?,?,?,'quoted',NULL)").run(jobId,id,nodeId,user,JSON.stringify(job),JSON.stringify(offer));
+    db.prepare("INSERT INTO kx_generation(id,run,node,user,input,quote,status,result) VALUES(?,?,?,?,?,?,'quoted',NULL)")
+      .run(jobId,id,nodeId,user,JSON.stringify(job),JSON.stringify(offer));
     return {id:jobId,points:offer.points,modelId,expiresAt:offer.expiresAt};
   }
   async function generate(user,{id,jobId}) {
@@ -297,25 +301,37 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
       return job;
     });
     if (row.status === 'complete') return JSON.parse(row.result);
+    if (inFlightGenerations.has(jobId)) return inFlightGenerations.get(jobId);
     // Gateway reserves/settles by jobId and returns the same terminal outcome on replay.
-    let result;
-    try {
-      result = await generateOrLookup(JSON.parse(row.input),JSON.parse(row.quote));
-    } catch (error) {
-      if(error?.definitive===true){
-        db.prepare("UPDATE kx_generation SET status='failed' WHERE id=? AND status='submitted'").run(jobId);
-        reject(409,error.message||'生成失败，已释放费用');
+    const running=(async()=>{
+      let result;
+      try {
+        result = await generateOrLookup(JSON.parse(row.input),JSON.parse(row.quote),{
+          providerTaskId:row.provider_task||'',
+          onProviderTask:taskId=>db.prepare("UPDATE kx_generation SET provider_task=? WHERE id=? AND status='submitted'").run(taskId,jobId),
+        });
+      } catch (error) {
+        if(error?.definitive===true){
+          db.prepare("UPDATE kx_generation SET status='failed' WHERE id=? AND status='submitted'").run(jobId);
+          reject(409,error.message||'生成失败，已释放费用');
+        }
+        if (error instanceof CourseProblem || Number.isInteger(error?.status)) throw error;
+        reject(502,error?.message || '模型生成失败');
       }
-      if (error instanceof CourseProblem || Number.isInteger(error?.status)) throw error;
-      reject(502,error?.message || '模型生成失败');
+      if (result?.status === 'released' && result.jobId === jobId) {
+        db.prepare("UPDATE kx_generation SET status='failed' WHERE id=? AND status='submitted'").run(jobId);
+        reject(409,'生成失败，已释放费用');
+      }
+      if (result?.jobId !== jobId || result?.status !== 'settled' || !result.transactionId || !result.asset) reject(503,'生成结算待确认');
+      db.prepare("UPDATE kx_generation SET status='complete',result=? WHERE id=? AND status='submitted'").run(JSON.stringify(result.asset),jobId);
+      return result.asset;
+    })();
+    inFlightGenerations.set(jobId,running);
+    try {
+      return await running;
+    } finally {
+      inFlightGenerations.delete(jobId);
     }
-    if (result?.status === 'released' && result.jobId === jobId) {
-      db.prepare("UPDATE kx_generation SET status='failed' WHERE id=? AND status='submitted'").run(jobId);
-      reject(409,'生成失败，已释放费用');
-    }
-    if (result?.jobId !== jobId || result?.status !== 'settled' || !result.transactionId || !result.asset) reject(503,'生成结算待确认');
-    db.prepare("UPDATE kx_generation SET status='complete',result=? WHERE id=? AND status='submitted'").run(JSON.stringify(result.asset),jobId);
-    return result.asset;
   }
   function hasRuntimeAccess({userId,runId,versionId,courseId,mode}) {
     const row = db.prepare('SELECT body FROM kx_runs JOIN kx_versions USING(version) WHERE id=? AND user=? AND version=? AND course=?').get(runId,userId,versionId,courseId);

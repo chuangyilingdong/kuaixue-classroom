@@ -191,6 +191,59 @@ test('MiniMax-H3 上传课程素材到 RunningHub，且执行体不发送 genera
   assert.ok(Number(signed.searchParams.get('expires'))>Math.floor(Date.now()/1000));
 });
 
+test('上游 taskId 持久化后可幂等续查，不会重复提交生成',async()=>{
+  const calls=[];
+  let storedTaskId='';
+  const adapter=createCanvasGenerationAdapter({
+    origin:'https://course.example.test',billingSecret:'billing-secret',runningHubApiKey:'rh-key',
+    fetchImpl:async(url,options)=>{
+      const href=String(url);calls.push(href);
+      if(href.endsWith('/internal/canvas-billing/reserve'))return Response.json({holdId:'hold-resume',status:'reserved'});
+      if(href.endsWith('/internal/canvas-billing/settle'))return Response.json({status:'succeeded'});
+      if(href.endsWith('/openapi/v2/minimax/hailuo-h3/multimodal-to-video'))
+        return Response.json({code:0,data:{taskId:'task-resume',status:'QUEUED'}});
+      if(href.endsWith('/openapi/v2/query'))
+        return Response.json({code:0,data:{taskId:'task-resume',status:'SUCCESS',
+          results:[{videoUrl:'https://cdn.example/resumed.mp4'}]}});
+      throw Error(`unexpected request ${href}`);
+    },pollIntervalMs:0,
+  });
+  const job={jobId:'job-resume',userId:'user-1',runId:'run-1',
+    modelId:'aicyld-runninghub::rh-minimax-h3-multi',modality:'VIDEO',
+    input:{prompt:'续查已有任务',params:{aspectRatio:'16:9',resolution:'768P',durationSeconds:5}}};
+  const first=await adapter.generateOrLookup(job,null,{onProviderTask:taskId=>{storedTaskId=taskId;}});
+  assert.equal(storedTaskId,'task-resume');
+  assert.equal(first.asset.assetUrl,'https://cdn.example/resumed.mp4');
+  calls.length=0;
+  const resumed=await adapter.generateOrLookup(job,null,{providerTaskId:storedTaskId});
+  assert.equal(resumed.asset.assetUrl,'https://cdn.example/resumed.mp4');
+  assert.ok(!calls.some(href=>href.endsWith('/minimax/hailuo-h3/multimodal-to-video')));
+  assert.ok(calls.filter(href=>href.endsWith('/openapi/v2/query')).length>=1);
+});
+
+test('任务已提交后的轮询超时保留预扣，供 taskId 续查结算',async()=>{
+  const calls=[];
+  const adapter=createCanvasGenerationAdapter({
+    origin:'https://course.example.test',billingSecret:'billing-secret',runningHubApiKey:'rh-key',
+    fetchImpl:async(url,options)=>{
+      const href=String(url);calls.push(href);
+      if(href.endsWith('/internal/canvas-billing/reserve'))return Response.json({holdId:'hold-timeout',status:'reserved'});
+      if(href.endsWith('/openapi/v2/minimax/hailuo-h3/multimodal-to-video'))
+        return Response.json({code:0,data:{taskId:'task-timeout',status:'QUEUED'}});
+      if(href.endsWith('/openapi/v2/query'))return Response.json({code:0,data:{taskId:'task-timeout',status:'RUNNING'}});
+      if(href.endsWith('/internal/canvas-billing/release'))return Response.json({status:'released'});
+      throw Error(`unexpected request ${href}`);
+    },pollIntervalMs:2,generationTimeoutMs:8,
+  });
+  await assert.rejects(adapter.generateOrLookup({
+    jobId:'job-timeout',userId:'user-1',runId:'run-1',
+    modelId:'aicyld-runninghub::rh-minimax-h3-multi',modality:'VIDEO',
+    input:{prompt:'等待续查',params:{aspectRatio:'16:9',resolution:'768P',durationSeconds:5}},
+  }),/画布生成超时/);
+  assert.ok(calls.some(href=>href.endsWith('/openapi/v2/query')));
+  assert.ok(!calls.some(href=>href.endsWith('/internal/canvas-billing/release')));
+});
+
 test('课程素材无法镜像时中止 H3、释放预扣且不提交生成任务',async()=>{
   const calls=[];
   const adapter=createCanvasGenerationAdapter({

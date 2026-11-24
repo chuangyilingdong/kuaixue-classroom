@@ -135,7 +135,7 @@ export function createCourseClient({ base, vibeOrigin, parentOrigin, fetchImpl =
     },
     quote: body => request('generations/quote',body),
     quotePreview: body => request('generations/quote',{...body,preview:true}),
-    generate: body => request('generations/confirm',body,360000),
+    generate: body => request('generations/confirm',body,540000),
     async save({id,mode,completed,revision,work}) {
       const data = await request('course-runs/save', {id,mode,completed,revision,...(mode === 'CANVAS' ? {work} : {})});
       if (data?.revision !== revision + 1) throw new Error('保存结果待确认，请重新打开课程。');
