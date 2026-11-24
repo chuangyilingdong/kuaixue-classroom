@@ -38,6 +38,8 @@ test('画布生成经主站报价预扣、RunningHub 执行后结算作品',asyn
   assert.equal(result.asset.assetUrl,'https://cdn.example/result.png');
   assert.equal(calls.find(call=>call.href.includes('/reserve')).body.facts.modelKey,
     'rhart-image-g-2.5-official-token/flare/text-to-image');
+  assert.equal(calls.find(call=>call.href.includes('/reserve')).body.facts.operation,
+    'kuaixue.canvas.text-to-image');
   assert.equal(calls.find(call=>call.href.endsWith('/text-to-image')).headers.Authorization,'Bearer rh-key');
 });
 
@@ -78,6 +80,7 @@ test('MiniMax-H3 使用正式模型键报价并把自动画幅发送为 adaptive
   assert.equal(quote.points,4);
   assert.equal(quote.executionModelKey,'minimax/hailuo-h3/multimodal-to-video');
   assert.equal(quoteFacts.modelKey,'minimax/hailuo-h3/multimodal-to-video');
+  assert.equal(quoteFacts.operation,'kuaixue.canvas.multimodal-to-video');
   assert.equal(quoteFacts.aspectRatio,'adaptive');
   assert.equal(quoteFacts.durationSeconds,5);
   const displayNameCannotRoute=canvasModelRoute({

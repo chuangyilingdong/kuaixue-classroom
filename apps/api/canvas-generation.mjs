@@ -187,7 +187,7 @@ function billingFacts(job,route=canvasModelRoute(job),assetOptions={}){
     providerModelKey:route.billingKey,
     displayName:job.modelLabel||job.modelId,
     category,
-    operation:route.execution.split('/').at(-1),
+    operation:`kuaixue.canvas.${route.execution.split('/').at(-1)}`,
     outputCount:1,
     batchCount:1,
   };
