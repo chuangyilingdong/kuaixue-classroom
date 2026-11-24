@@ -6,6 +6,7 @@ const {setTimeout: delay} = require('node:timers/promises');
 
 app.disableHardwareAcceleration();
 app.setPath('userData', mkdtempSync(path.join(tmpdir(), 'kx-vibe-focus-')));
+process.env.KUAIXUE_QA_WRAPPER = '1';
 const reportPath = path.resolve(__dirname, '../_qa_render/vibe-focus-latest.json');
 const progressPath = path.resolve(__dirname, '../_qa_render/vibe-focus-latest.log');
 function progress(message) {
@@ -138,7 +139,10 @@ app.whenReady().then(async () => {
     progress('loading wrapper');
     void window.loadURL(wrapperUrl.href).catch(error => progress(`wrapper load error: ${error.message}`));
     frame = await waitFor(
-      () => window.webContents.mainFrame.framesInSubtree.find(item => new URL(item.url).pathname === '/kuaixue/workbench/'),
+      () => window.webContents.mainFrame.framesInSubtree.find(item => {
+        const url = new URL(item.url);
+        return url.pathname.startsWith('/kuaixue/workbench/') && url.pathname !== '/kuaixue/workbench/qa-wrapper';
+      }),
       'Vibe 工作台 frame',
     );
     progress('vibe frame found');

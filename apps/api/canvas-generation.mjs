@@ -20,6 +20,10 @@ const AI_MEDIA_MODELS=new Set([
 ]);
 import {signedCourseAssetUrl} from '../../shared/course-asset-url.mjs';
 
+const COURSE_ASSET_PATTERN=/^\/api\/v1\/course-assets\/([a-zA-Z0-9-]{8,80})$/;
+const ASSET_MIRROR_TTL_MS=20*60*60*1000;
+const ASSET_MIRROR_MAX_BYTES=50*1024*1024;
+
 export const canvasBillingAliases=Object.freeze({
   'rh-seedream-v5-pro-t2i':'seedream-v5-pro/text-to-image',
   'rh-seedream-v5-pro-i2i':'seedream-v5-pro/image-to-image',
@@ -150,14 +154,22 @@ function generationBody(job,assetOptions={}){
     body.lastFrameImage=signingOptions?signedCourseAssetUrl(input.lastFrameAssetUrl,signingOptions):input.lastFrameAssetUrl;
   if(String(job.modality||'').toUpperCase()==='VIDEO'&&body.aspectRatio==='auto')body.aspectRatio='adaptive';
   const model=providerModel(job?.modelId);
-  if(model==='rh-minimax-h3-multi'||model==='rh-minimax-h3-i2v'){
+  if(model==='rh-minimax-h3-multi'){
     const ratio=body.aspectRatio;
     const duration=body.durationSeconds;
-    const audio=body.audio;
+    // H3 的可执行 schema 不接受 generateAudio。已成功跑过的 H3 通道同样
+    // 不发送该字段；传 false 也会被上游视为参数校验失败，并返回空 taskId。
+    const h3={prompt:body.prompt,ratio:ratio==='auto'?'adaptive':ratio||'adaptive',
+      resolution:body.resolution||'768P',duration:String(duration||5)};
+    for(const key of ['imageUrls','videoUrls','audioUrls','clientId'])if(body[key]!==undefined)h3[key]=body[key];
+    return h3;
+  }
+  if(model==='rh-minimax-h3-i2v'){
+    const ratio=body.aspectRatio;
+    const duration=body.durationSeconds;
     if(ratio!==undefined&&ratio!=='')body.ratio=ratio;
     if(duration!==undefined&&duration!=='')body.duration=String(duration);
-    body.generateAudio=audio===true;
-    for(const key of ['aspectRatio','durationSeconds','audio','audioRole','inputMode','title'])delete body[key];
+    for(const key of ['aspectRatio','durationSeconds','audio','generateAudio','audioRole','inputMode','title'])delete body[key];
   }
   return body;
 }
@@ -182,7 +194,8 @@ function billingFacts(job,route=canvasModelRoute(job),assetOptions={}){
     const value=params[key]!==undefined?params[key]:body[key];
     if(value!==undefined&&value!=='')facts[key]=key==='aspectRatio'&&video&&value==='auto'?'adaptive':value;
   }
-  if(body.generateAudio===true||params.generateAudio===true||params.audio===true)facts.generateAudio=true;
+  if(route.execution!=='rh-minimax-h3-multi'&&
+    (body.generateAudio===true||params.generateAudio===true||params.audio===true))facts.generateAudio=true;
   if(Array.isArray(body.imageUrls)&&body.imageUrls.length)facts.referenceImageCount=body.imageUrls.length;
   if(category==='text') {
     const characters=String(body.prompt||'').length;
@@ -197,6 +210,20 @@ function unwrap(payload){
     throw Object.assign(Error(String(payload.msg||payload.message||`RunningHub 错误 ${payload.code}`)),{definitive:true});
   }
   return payload?.data&&typeof payload.data==='object'?payload.data:payload;
+}
+
+function failureDetail(result){
+  const response=result?.__kuaixueResponse||{};
+  const failed=result?.failedReason;
+  const values=[
+    result?.errorMessage,
+    typeof failed==='object'?failed?.exceptionMessage||failed?.message:failed,
+    result?.errorCode,
+    response.message,
+    result?.status,
+  ].map(value=>typeof value==='string'?value.trim():value!==undefined&&value!==null?JSON.stringify(value):'')
+    .filter(Boolean);
+  return [...new Set(values)].join('；').slice(0,800);
 }
 
 function resultAsset(result,job){
@@ -223,19 +250,24 @@ export function createCanvasGenerationAdapter({
   runningHubLlmBaseUrl='https://llm.runninghub.cn/v1',
   runningHubLlmAiBaseUrl='https://llm.runninghub.ai/v1',
   publicOrigin=origin,
+  courseAssetOrigin=origin,
   assetSigningSecret='',
   assetUrlTtlSeconds=3600,
+  assetMirrorTtlMs=ASSET_MIRROR_TTL_MS,
+  maxMirrorAssetBytes=ASSET_MIRROR_MAX_BYTES,
   fetchImpl=fetch,
   pollIntervalMs=2000,
   generationTimeoutMs=300000,
 }={}){
   if(!origin||!billingSecret||!runningHubApiKey)throw Error('画布生成适配配置不完整');
   const mainSite=new URL(origin);
+  const courseAssets=new URL(courseAssetOrigin);
   const cnBase=new URL(runningHubBaseUrl);
   const aiBase=new URL(runningHubAiBaseUrl);
   const llmCnBase=new URL(runningHubLlmBaseUrl);
   const llmAiBase=new URL(runningHubLlmAiBaseUrl);
   const assetOptions=assetSigningSecret?{publicOrigin,secret:assetSigningSecret,ttlSeconds:assetUrlTtlSeconds}:{};
+  const assetMirrorCache=new Map();
 
   async function billing(path,body,timeout=30000){
     const response=await fetchImpl(new URL(`/internal/canvas-billing/${path}`,mainSite),{
@@ -290,6 +322,75 @@ export function createCanvasGenerationAdapter({
     return {text:text.trim(),usage:payload?.usage||{}};
   }
 
+  function mirrorFileName(contentType,sourceUrl){
+    const extension={
+      'image/jpeg':'jpg','image/png':'png','image/webp':'webp','image/gif':'gif',
+      'video/mp4':'mp4','video/webm':'webm','video/quicktime':'mov',
+      'audio/mpeg':'mp3','audio/mp4':'m4a','audio/aac':'aac','audio/ogg':'ogg',
+      'audio/wav':'wav','audio/webm':'weba',
+    }[String(contentType||'').split(';')[0].trim().toLowerCase()]
+      ||String(sourceUrl).match(/\.([a-z0-9]{2,5})(?:[?#]|$)/i)?.[1]||'bin';
+    return `course-asset.${extension}`;
+  }
+
+  async function mirrorCourseAsset(value,config){
+    let signed;
+    try{
+      const signingOptions=assetOptions.secret?{
+        ...assetOptions,
+        expires:Math.floor(Date.now()/1000)+Math.max(60,Math.min(7200,assetUrlTtlSeconds||3600)),
+      }:null;
+      signed=new URL(signedCourseAssetUrl(value,signingOptions));
+    }catch{return value;}
+    const match=signed.pathname.match(COURSE_ASSET_PATTERN);
+    if(!match)return value;
+    const cacheKey=`${config.base.href}\n${signed.pathname}`;
+    const cached=assetMirrorCache.get(cacheKey);
+    if(cached&&Date.now()-cached.at<assetMirrorTtlMs)return cached.url;
+
+    const local=new URL(signed.href);
+    local.protocol=courseAssets.protocol;
+    local.host=courseAssets.host;
+    const download=await fetchImpl(local.href,{
+      method:'GET',redirect:'error',cache:'no-store',signal:AbortSignal.timeout(120000),
+    });
+    if(!download.ok)throw Object.assign(Error(`读取课程素材失败：HTTP ${download.status}`),{definitive:true});
+    const declared=Number(download.headers?.get?.('content-length')||0);
+    if(declared>maxMirrorAssetBytes)throw Object.assign(Error(`课程素材超过上游 ${Math.round(maxMirrorAssetBytes/1024/1024)}MB 上限`),{definitive:true});
+    const bytes=new Uint8Array(await download.arrayBuffer());
+    if(!bytes.length)throw Object.assign(Error('课程素材为空'),{definitive:true});
+    if(bytes.length>maxMirrorAssetBytes)throw Object.assign(Error(`课程素材超过上游 ${Math.round(maxMirrorAssetBytes/1024/1024)}MB 上限`),{definitive:true});
+    const contentType=String(download.headers?.get?.('content-type')||'application/octet-stream').split(';')[0].trim();
+    const form=new FormData();
+    form.append('file',new Blob([bytes],{type:contentType}),mirrorFileName(contentType,signed.href));
+    const uploadUrl=new URL('media/upload/binary',`${config.base.href.replace(/\/+$/,'')}/`);
+    const response=await fetchImpl(uploadUrl,{
+      method:'POST',redirect:'error',cache:'no-store',
+      headers:{Authorization:`Bearer ${config.key}`,Accept:'application/json'},
+      body:form,signal:AbortSignal.timeout(120000),
+    });
+    const payload=await response.json().catch(()=>null);
+    if(!response.ok||Number(payload?.code||0)!==0){
+      const detail=payload?.msg||payload?.message||payload?.error?.message||`HTTP ${response.status}`;
+      throw Object.assign(Error(`素材上传到 RunningHub 失败：${String(detail).slice(0,500)}`),{definitive:true});
+    }
+    const mirrored=String(payload?.data?.download_url||payload?.download_url||payload?.data?.url||payload?.url||'').trim();
+    if(!/^https:\/\//i.test(mirrored))throw Object.assign(Error('RunningHub 素材上传未返回下载地址'),{definitive:true});
+    assetMirrorCache.set(cacheKey,{url:mirrored,at:Date.now()});
+    return mirrored;
+  }
+
+  async function mirrorGenerationAssets(body,config){
+    const next={...body};
+    for(const key of ['imageUrls','videoUrls','audioUrls']){
+      if(Array.isArray(next[key]))next[key]=await Promise.all(next[key].map(value=>mirrorCourseAsset(value,config)));
+    }
+    for(const key of ['sourceImage','lastFrameImage']){
+      if(typeof next[key]==='string')next[key]=await mirrorCourseAsset(next[key],config);
+    }
+    return next;
+  }
+
   async function quoteGeneration(job){
     const route=canvasModelRoute(job);
     const facts=billingFacts(job,route,assetOptions);
@@ -307,22 +408,25 @@ export function createCanvasGenerationAdapter({
     const holdId=reservation?.holdId||'';
     try{
       const config=runningHubConfig(route);
-      const body={...generationBody(job,assetOptions),clientId:job.jobId};
+      let body={...generationBody(job,assetOptions),clientId:job.jobId};
       if(route.text) {
         const chat=await chatCompletion(route,job);
         if(holdId)await billing('settle',{holdId,outcome:'succeeded',reason:'文本生成完成'});
         return {jobId:job.jobId,status:'settled',transactionId:holdId||`free-${job.jobId}`,
           asset:{text:chat.text,metadata:{taskId:'',text:chat.text}}};
       }
+      body=await mirrorGenerationAssets(body,config);
       let result=await runningHub(route.execution,body,config);
       const taskId=String(result?.taskId||'');
       if(!taskId){
         const upstream=result?.__kuaixueResponse||{};
         console.error('[canvas-generation] RunningHub task not created',JSON.stringify({
           model:route.execution,httpStatus:upstream.status,code:upstream.code,
-          message:upstream.message,dataKeys:result&&typeof result==='object'?Object.keys(result).slice(0,30):[],
+          message:upstream.message,detail:failureDetail(result),
+          dataKeys:result&&typeof result==='object'?Object.keys(result).slice(0,30):[],
         }));
-        throw Object.assign(Error(upstream.message?`RunningHub 未返回任务编号：${upstream.message}`:'RunningHub 未返回任务编号'),{definitive:true});
+        const detail=failureDetail(result);
+        throw Object.assign(Error(detail?`RunningHub 未返回任务编号：${detail}`:'RunningHub 未返回任务编号'),{definitive:true});
       }
       let status=String(result?.status||'QUEUED').toUpperCase();
       const started=Date.now();
@@ -360,6 +464,7 @@ export function canvasGenerationFromEnv(env=process.env){
     runningHubLlmBaseUrl:env.KUAIXUE_RUNNINGHUB_LLM_BASE_URL||undefined,
     runningHubLlmAiBaseUrl:env.KUAIXUE_RUNNINGHUB_LLM_AI_BASE_URL||undefined,
     publicOrigin:env.KUAIXUE_PUBLIC_MAIN_ORIGIN||origin,
+    courseAssetOrigin:env.KUAIXUE_COURSE_ASSET_ORIGIN||env.KUAIXUE_COURSE_SERVICE_ORIGIN||origin,
     assetSigningSecret:env.KUAIXUE_ASSET_SIGNING_SECRET||env.KUAIXUE_INTERNAL_SECRET||env.KUAIXUE_CANVAS_BILLING_SECRET||'',
   });
 }

@@ -134,12 +134,20 @@ test('文本模型走 OpenAI 兼容聊天通道而不是 RunningHub 任务接口
   assert.ok(!calls.some(href=>href.includes('/openapi/v2/')));
 });
 
-test('MiniMax-H3 把对象参考图发送到执行接口，并为课程素材生成短期公网签名',async()=>{
+test('MiniMax-H3 上传课程素材到 RunningHub，且执行体不发送 generateAudio',async()=>{
   const calls=[];
   const fetchImpl=async(url,options)=>{
-    const href=String(url);calls.push({href,body:JSON.parse(options.body||'{}')});
+    const href=String(url);
+    const body=options.body instanceof FormData?Object.fromEntries(options.body.entries()):JSON.parse(options.body||'{}');
+    calls.push({href,body,headers:options.headers||{}});
     if(href.endsWith('/internal/canvas-billing/quote'))return Response.json({points:42,balance:1000});
     if(href.endsWith('/internal/canvas-billing/reserve'))return Response.json({holdId:'hold-video',status:'reserved'});
+    if(href.startsWith('https://course.example.test/api/v1/course-assets/')){
+      return new Response(new Uint8Array([137,80,78,71]),{headers:{'Content-Type':'image/png','Content-Length':'4'}});
+    }
+    if(href.endsWith('/openapi/v2/media/upload/binary')){
+      return Response.json({code:0,data:{download_url:'https://rh.example/uploaded-course-asset.png'}});
+    }
     if(href.endsWith('/openapi/v2/rh-minimax-h3-multi'))return Response.json({code:0,data:{taskId:'task-video',status:'QUEUED'}});
     if(href.endsWith('/openapi/v2/query'))return Response.json({code:0,data:{taskId:'task-video',status:'SUCCESS',
       results:[{videoUrl:'https://cdn.example/video.mp4'}]}});
@@ -149,6 +157,7 @@ test('MiniMax-H3 把对象参考图发送到执行接口，并为课程素材生
   const adapter=createCanvasGenerationAdapter({
     origin:'https://course.example.test',billingSecret:'billing-secret',runningHubApiKey:'rh-key',
     publicOrigin:'https://aicyld.com.cn',assetSigningSecret:'course-asset-test-secret',
+    courseAssetOrigin:'https://course.example.test',
     fetchImpl,pollIntervalMs:0,
   });
   const job={jobId:'job-video-refs',userId:'user-1',runId:'run-1',
@@ -164,15 +173,44 @@ test('MiniMax-H3 把对象参考图发送到执行接口，并为课程素材生
   await adapter.generateOrLookup(job);
   const execute=calls.find(call=>call.href.endsWith('/openapi/v2/rh-minimax-h3-multi'));
   assert.deepEqual(execute.body.imageUrls.slice(0,1),['https://cdn.example/reference.png']);
+  assert.deepEqual(execute.body.imageUrls.slice(1),['https://rh.example/uploaded-course-asset.png']);
   assert.equal(execute.body.ratio,'16:9');
   assert.equal(execute.body.duration,'5');
-  assert.equal(execute.body.generateAudio,false);
+  assert.equal('generateAudio' in execute.body,false);
   assert.equal(execute.body.aspectRatio,undefined);
   assert.equal(execute.body.durationSeconds,undefined);
   assert.equal(execute.body.audioRole,undefined);
   assert.equal(execute.body.inputMode,undefined);
-  const signed=new URL(execute.body.imageUrls[1]);
-  assert.equal(signed.origin,'https://aicyld.com.cn');
+  const upload=calls.find(call=>call.href.endsWith('/openapi/v2/media/upload/binary'));
+  assert.equal(upload.headers.Authorization,'Bearer rh-key');
+  assert.ok(upload.body.file?.name?.endsWith('.png'));
+  const internal=calls.find(call=>call.href.startsWith('https://course.example.test/api/v1/course-assets/'));
+  const signed=new URL(internal.href);
+  assert.equal(signed.origin,'https://course.example.test');
   assert.match(signed.searchParams.get('signature')||'',/^[a-zA-Z0-9_-]{43}$/);
   assert.ok(Number(signed.searchParams.get('expires'))>Math.floor(Date.now()/1000));
+});
+
+test('课程素材无法镜像时中止 H3、释放预扣且不提交生成任务',async()=>{
+  const calls=[];
+  const adapter=createCanvasGenerationAdapter({
+    origin:'https://course.example.test',billingSecret:'billing-secret',runningHubApiKey:'rh-key',
+    publicOrigin:'https://aicyld.com.cn',assetSigningSecret:'course-asset-test-secret',
+    courseAssetOrigin:'https://course.example.test',
+    fetchImpl:async(url,options)=>{
+      const href=String(url);calls.push(href);
+      if(href.endsWith('/internal/canvas-billing/reserve'))return Response.json({holdId:'hold-mirror-fail',status:'reserved'});
+      if(href.startsWith('https://course.example.test/api/v1/course-assets/'))return new Response('',{status:500});
+      if(href.endsWith('/internal/canvas-billing/release'))return Response.json({status:'released'});
+      throw Error(`unexpected request ${href}`);
+    },pollIntervalMs:0,
+  });
+  await assert.rejects(adapter.generateOrLookup({
+    jobId:'job-mirror-fail',userId:'user-1',runId:'run-1',
+    modelId:'aicyld-runninghub::rh-minimax-h3-multi',modality:'VIDEO',
+    input:{prompt:'猴子跳起来',params:{aspectRatio:'16:9',resolution:'768P',durationSeconds:5},
+      referenceAssets:[{type:'IMAGE',url:'https://aicyld.com.cn/api/v1/course-assets/11111111-2222-3333-4444-555555555555'}]},
+  }),/读取课程素材失败/);
+  assert.ok(calls.some(href=>href.endsWith('/internal/canvas-billing/release')));
+  assert.ok(!calls.some(href=>href.endsWith('/rh-minimax-h3-multi')));
 });

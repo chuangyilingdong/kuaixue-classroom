@@ -244,7 +244,7 @@ tests/canvasGeneration.test.js
 | 模型族 | 画幅字段 | 时长字段 | 音频/参考素材 |
 | --- | --- | --- | --- |
 | Seedance 2.5 / 2.0 | `ratio` | `duration` 字符串 | `generateAudio`；多模态使用 `imageUrls/videoUrls/audioUrls` |
-| MiniMax H3 | `ratio` | `duration` 字符串 | `generateAudio`；多模态使用 `imageUrls/videoUrls/audioUrls` |
+| MiniMax H3 | `ratio` | `duration` 字符串 | 不发送 `generateAudio`；多模态使用 `imageUrls/videoUrls/audioUrls` |
 | Kling | `aspectRatio` | `duration` 字符串 | 不发送 `generateAudio`；`kling-v4` 图生视频使用 `firstImageUrl` |
 | Wan 3 | `aspectRatio` | `duration` 字符串 | 发送 `generateAudio`；参考视频使用 `videoUrls` |
 | Muse Video | `aspectRatio` | 固定 `duration: "10"` | 固定 `resolution: "720p"`、`nsfwCheck: false`，不发送 `generateAudio` |
@@ -429,16 +429,27 @@ title
   "ratio": "adaptive",
   "resolution": "768P",
   "duration": "5",
-  "generateAudio": false,
   "imageUrls": [
-    "https://aicyld.com.cn/api/v1/course-assets/<asset-id>?expires=<unix>&signature=<sig>"
+    "https://rh-images-switch-1252422369.cos.ap-guangzhou.myqcloud.com/..."
   ],
   "clientId": "<jobId>"
 }
 ```
 
 `imageUrls`、`videoUrls`、`audioUrls` 按参考素材类型分组。
-课程私有素材必须先转换为短期公网签名 URL。
+课程私有素材不能只依赖短期公网签名 URL。运行时先从本机课程素材服务读取字节，
+再调用 RunningHub 的 `POST /openapi/v2/media/upload/binary` 换成上游自己的
+`data.download_url` 后才提交生成任务。上传失败必须中止本次生成并释放预扣，
+不能退回原 URL 静默继续。
+
+### 2026-11-24 H3 失败复核
+
+0120 发布后三次 H3 任务都未创建上游任务，预扣均为 42 且已全额退回。已成功
+跑过的 H3 备用通道使用的是 `prompt / ratio / resolution / duration / imageUrls`，
+不发送 `generateAudio`；本次新适配器却持续发送 `generateAudio: false`。
+同时站内参考图此前只做了签名，没有镜像到 RunningHub。当前实现已按上述两条
+修正，并把 `errorCode / errorMessage / failedReason / status` 纳入服务日志与
+用户可见失败原因。仍需账号本人发起一次真实生成确认 `taskId`、结算和作品下载。
 
 期望响应：
 
