@@ -141,6 +141,10 @@ test('quoted generation uses course model, recovers uncertain settlement on the 
   assert.equal((await p.quote('learner',node)).id,offer.id);
   assert.deepEqual(await p.generate('learner',request),{text:'作品'});
   assert.deepEqual(await p.generate('learner',request),{text:'作品'});assert.equal(settled.size,1);
+  await assert.rejects(p.generationState('other',{id:run.id,nodeId:'scene'}));
+  assert.deepEqual(await p.generationState('learner',{id:run.id,nodeId:'scene'}),{
+    jobId:offer.id,status:'COMPLETE',providerTaskId:'',asset:{text:'作品'},
+  });
 });
 
 test('definitive upstream task creation failure releases the job for a fresh retry',async t=>{

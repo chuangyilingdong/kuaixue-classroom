@@ -340,6 +340,19 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
       inFlightGenerations.delete(jobId);
     }
   }
+  async function generationState(user,{id,nodeId}) {
+    generationContext(user,id);
+    if(typeof nodeId!=='string'||!nodeId.trim()||nodeId.length>150)reject(400,'生成节点无效');
+    const row=db.prepare(`SELECT id,status,provider_task,result FROM kx_generation
+      WHERE run=? AND node=? AND user=? ORDER BY rowid DESC LIMIT 1`).get(id,nodeId,user);
+    if(!row)return {jobId:null,status:'NONE',asset:null};
+    return {
+      jobId:row.id,
+      status:String(row.status||'').toUpperCase(),
+      providerTaskId:row.provider_task||'',
+      asset:row.status==='complete'&&row.result?JSON.parse(row.result):null,
+    };
+  }
   function hasRuntimeAccess({userId,runId,versionId,courseId,mode}) {
     const row = db.prepare('SELECT body FROM kx_runs JOIN kx_versions USING(version) WHERE id=? AND user=? AND version=? AND course=?').get(runId,userId,versionId,courseId);
     return Boolean(row && entitled(userId,versionId) && JSON.parse(row.body).permittedDeliveryModes.includes(mode));
@@ -348,7 +361,7 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
   function revoke(orderId,transactionId) {
     return db.prepare("UPDATE kx_orders SET status='revoked' WHERE id=? AND receipt=? AND status='confirmed'").run(orderId,transactionId).changes;
   }
-  return {catalog,detail,publish,hide,listGrants,purchase,start,save,works,quote,generate,uploadAsset,asset,assetById,
+  return {catalog,detail,publish,hide,listGrants,purchase,start,save,works,quote,generate,generationState,uploadAsset,asset,assetById,
     localRuntime,uploadLocalSnapshot:uploadLocalSnapshotRecord,downloadLocalSnapshot:downloadLocalSnapshotRecord,
     revoke,hasRuntimeAccess,close:()=>db.close()};
 }

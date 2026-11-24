@@ -101,10 +101,6 @@ function activeWorkspacePath(fallback = '') {
   return separator > 1 ? key.slice(0, separator) : fallback;
 }
 
-function workspaceIndexFile(directory: string) {
-  return `${directory.replace(/[\\/]+$/,'')}${/[\\/]/.test(directory)?'\\':'/'}index.html`;
-}
-
 function fileUrlPath(url: string) {
   try {
     const parsed = new URL(url);
@@ -129,63 +125,11 @@ function openCourseHtmlInClassroom(url: string) {
 
 function mountCourseWorkspaceActions() {
   let lastWorkspace = '';
-  const style = document.createElement('style');
-  style.dataset.kuaixueCourseWorkspaceStyle = 'true';
-  style.textContent = `
-    .kuaixue-html-preview-action {
-      display: inline-flex;
-      align-items: center;
-      height: 28px;
-      padding: 0 9px;
-      border: 1px solid var(--border, rgb(255 255 255 / 14%));
-      border-radius: 8px;
-      color: var(--foreground, currentColor);
-      background: var(--input, rgb(255 255 255 / 5%));
-      font: inherit;
-      font-size: 12px;
-      font-weight: 500;
-      line-height: 1;
-      cursor: pointer;
-      -webkit-app-region: no-drag;
-    }
-    .kuaixue-html-preview-action:hover {
-      border-color: var(--border-hover, rgb(255 255 255 / 28%));
-      background: var(--hover, rgb(255 255 255 / 9%));
-    }
-  `;
-  document.head.append(style);
-
-  document.addEventListener('click', event => {
-    const target = event.target;
-    if (!(target instanceof Element) || !target.closest('[data-kuaixue-html-preview]')) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const current = activeWorkspacePath(initialWorkspacePath());
-    if (!current) return;
-    postToClassroom({
-      type:'kuaixue-open-html-preview',
-      requestId:`html-${Date.now()}`,
-      directory:current,
-      file:workspaceIndexFile(current),
-    });
-  }, true);
-
   function sync() {
     const directory = activeWorkspacePath(initialWorkspacePath());
     if (directory && directory !== lastWorkspace) {
       lastWorkspace = directory;
       postToClassroom({type:'kuaixue-workbench-workspace',directory});
-    }
-    for (const header of document.querySelectorAll<HTMLElement>('[data-testid="workspace-header"]')) {
-      const actions = header.querySelector<HTMLElement>('[data-testid="workspace-more-button"]')?.parentElement;
-      if (!actions || actions.querySelector('[data-kuaixue-html-preview]')) continue;
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'kuaixue-html-preview-action';
-      button.dataset.kuaixueHtmlPreview = 'true';
-      button.textContent = 'HTML 预览';
-      button.title = '在右侧打开当前工程中的 index.html';
-      actions.prepend(button);
     }
   }
 

@@ -14,6 +14,7 @@ export function workbenchUrl(origin, parentOrigin, runId, ticket) {
 }
 
 export function createCourseClient({ base, vibeOrigin, parentOrigin, fetchImpl = fetch, account }) {
+  const sleep = milliseconds => new Promise(resolve => setTimeout(resolve,milliseconds));
   const errors = {401:'请重新登录快学账号。', 402:'积分余额不足。', 403:'当前账号没有此课程工作区的权益。', 404:'云端尚无工程快照。', 409:'课程、进度或工程快照已更新，请先刷新。', 413:'文件超出大小限制。', 415:'不支持的文件类型。', 503:'课程服务暂不可用，请稍后重试。'};
   async function failure(response) {
     const problem = await response.json().catch(() => null);
@@ -142,6 +143,34 @@ export function createCourseClient({ base, vibeOrigin, parentOrigin, fetchImpl =
     quote: body => request('generations/quote',body),
     quotePreview: body => request('generations/quote',{...body,preview:true}),
     generate: body => request('generations/confirm',body,540000),
+    generationStatus: body => request('generations/status',body),
+    async generateTracked({id,nodeId,jobId,timeout=600000}) {
+      let longResult=null,longError=null,longSettled=false;
+      const longRequest=request('generations/confirm',{id,jobId},540000)
+        .then(result=>{longResult=result;longSettled=true;return result;})
+        .catch(error=>{longError=error;longSettled=true;});
+      const started=Date.now();
+      let missingChecks=0;
+      while(Date.now()-started<timeout){
+        if(longSettled&&longResult)return longResult;
+        try {
+          const state=await request('generations/status',{id,nodeId});
+          if(state?.jobId===jobId){
+            if(state.status==='COMPLETE'&&state.asset)return state.asset;
+            if(state.status==='FAILED')throw new Error('生成失败，已释放费用');
+            missingChecks=0;
+          }else if(state?.status==='NONE'&&longError&&++missingChecks>=3){
+            throw longError;
+          }
+        }catch(error){
+          if(longError&&!longSettled)throw longError;
+          if(error?.message==='生成失败，已释放费用')throw error;
+        }
+        await sleep(1500);
+      }
+      if(longResult)return longResult;
+      throw longError||new Error('画布生成超时，请返回课程后重新打开确认结果');
+    },
     async save({id,mode,completed,revision,work}) {
       const data = await request('course-runs/save', {id,mode,completed,revision,...(mode === 'CANVAS' ? {work} : {})});
       if (data?.revision !== revision + 1) throw new Error('保存结果待确认，请重新打开课程。');

@@ -1351,7 +1351,7 @@ function CanvasDockPanel({ node, containerRef, viewportBusy = false, onRequestRo
 
 const nodeTypes = { prompt: PromptNode, image: ImageNode, character: CharacterNode, scene: SceneNode, video: VideoNode, note: NoteNode, audio: AudioNode, animation: AnimationNode };
 
-function CanvasSurface({ initialSnapshot, readOnly, onChange, onGenerateNode, beforeGenerate = null, quoteGeneration = null, onUploadFiles, onRequestMaterials, resolveAssetUrl = null, showStarter, capabilities = ['text'], allowNodeCreation = true, focusRequest = null, boxModalities = [], entranceRequest = null, placementRef = null }) {
+function CanvasSurface({ initialSnapshot, readOnly, onChange, onGenerateNode, recoverGeneration = null, beforeGenerate = null, quoteGeneration = null, onUploadFiles, onRequestMaterials, resolveAssetUrl = null, showStarter, capabilities = ['text'], allowNodeCreation = true, focusRequest = null, boxModalities = [], entranceRequest = null, placementRef = null }) {
   // 受控课堂画布（allowNodeCreation=false）默认不使用固定起始底稿，避免空画布每次刷新被自动填充。
   const shouldShowStarter = showStarter === undefined ? (!readOnly && allowNodeCreation) : showStarter;
   const initial = useMemo(() => {
@@ -1508,6 +1508,26 @@ function CanvasSurface({ initialSnapshot, readOnly, onChange, onGenerateNode, be
       updateNode(nodeId, { generationStatus: 'FAILED', generationError: error instanceof Error ? error.message : 'AI生成失败' });
     }
   }, [beforeGenerate, nodes, onGenerateNode, readOnly, updateNode]);
+
+  const recoveredGenerationNodesRef = useRef(new Set());
+  useEffect(() => {
+    if (!recoverGeneration || readOnly) return;
+    for (const node of nodes || []) {
+      if (!node.data?.boxId || node.data?.assetUrl || node.data?.generatedText ||
+          recoveredGenerationNodesRef.current.has(node.id)) continue;
+      recoveredGenerationNodesRef.current.add(node.id);
+      void recoverGeneration({nodeId:node.id,boxId:node.data.boxId}).then((asset) => {
+        if (!asset) return;
+        if (String(node.data?.slotType || '').toLowerCase() === 'text') {
+          updateNode(node.id, {generatedText:String(asset?.metadata?.text || asset?.text || ''),
+            generationStatus:null,generationError:'',generationStartedAt:null});
+        } else if (asset.assetUrl) {
+          updateNode(node.id, {assetUrl:asset.assetUrl,previewUrl:asset.previewUrl,
+            generationStatus:null,generationError:'',generationStartedAt:null});
+        }
+      }).catch(() => {});
+    }
+  }, [nodes, readOnly, recoverGeneration, updateNode]);
 
   // 取连到该节点的图片素材地址，供图生视频当首帧。
   // 按连线顺序取连到该节点的图片素材地址：第一条当首帧，第二条当尾帧（首尾帧模型用）。

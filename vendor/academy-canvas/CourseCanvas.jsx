@@ -6,7 +6,7 @@ import {Icon} from './icons.jsx';
 import './classroom.css';
 const PROMPT_SLOT_TYPES = ['text','prompt','image','video','animation','music','audio'];
 const PROMPT_SLOT_ACTION = {text:'写文字',prompt:'写文字',image:'生图',video:'生视频',animation:'生动画',music:'生音乐',audio:'生音频'};
-export function CourseCanvas({initial,course,onChange,beforeGenerate,quoteGeneration,onGenerateNode,onUploadFiles}) {
+export function CourseCanvas({initial,course,onChange,beforeGenerate,quoteGeneration,onGenerateNode,onUploadFiles,recoverGeneration}) {
   const project = {data:{...course,canvasSnapshot:initial,capabilities:[...new Set([...(course.modelPolicy || []).map(item=>item.modality.toLowerCase()),...(course.materialGroups || []).flatMap(group=>group.materials || []).map(material=>(material.snapshot?.box?.modality === 'AUDIO' ? 'music' : material.snapshot?.box?.modality?.toLowerCase())).filter(Boolean)])]}};
   const [canvasSnapshot,setCanvasSnapshot] = useState(initial);
   const [draft,updateDraft] = useState(initial);
@@ -301,7 +301,7 @@ export function CourseCanvas({initial,course,onChange,beforeGenerate,quoteGenera
       </aside>
       <div className="cv-main">
         
-        <div className="cv-viewport"><CanvasEditor key={canvasRevision} initialSnapshot={canvasSnapshot || project.data.canvasSnapshot} capabilities={capabilities} readOnly={!editable} allowNodeCreation={false} boxModalities={boxModalities} showStarter={false} beforeGenerate={beforeGenerate} quoteGeneration={quoteGeneration} onGenerateNode={onGenerateNode} onUploadFiles={uploadLocalFiles} onRequestMaterials={openMaterialsPanel} onChange={setDraft} focusRequest={focusRequest} entranceRequest={entranceRequest} placementRef={placementRef} /></div>
+        <div className="cv-viewport"><CanvasEditor key={canvasRevision} initialSnapshot={canvasSnapshot || project.data.canvasSnapshot} capabilities={capabilities} readOnly={!editable} allowNodeCreation={false} boxModalities={boxModalities} showStarter={false} beforeGenerate={beforeGenerate} quoteGeneration={quoteGeneration} onGenerateNode={onGenerateNode} recoverGeneration={recoverGeneration} onUploadFiles={uploadLocalFiles} onRequestMaterials={openMaterialsPanel} onChange={setDraft} focusRequest={focusRequest} entranceRequest={entranceRequest} placementRef={placementRef} /></div>
       </div>
     </section>
     {message && <div className={`cv-toast ${''}`}>{message}</div>}

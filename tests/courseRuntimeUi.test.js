@@ -78,20 +78,35 @@ test('Vibe 工作区默认不自动打开作品预览',()=>{
   assert.match(run,/setPreviewOpen\(true\)/);
 });
 
-test('当前工程提供 HTML 预览入口并打开课程侧边栏',()=>{
+test('点击产物文件打开课程侧边栏，不注入额外 HTML 预览按钮',()=>{
   const run=readFileSync(new URL('../src/ui/CourseRun.jsx',import.meta.url),'utf8');
   const entry=readFileSync(new URL('../integrations/vibecoding/course-entry.tsx',import.meta.url),'utf8');
   const preview=readFileSync(new URL('../integrations/vibecoding/course-html-preview.mjs',import.meta.url),'utf8');
   const builder=readFileSync(new URL('../scripts/build-vibe-workbench.mjs',import.meta.url),'utf8');
   const main=readFileSync(new URL('../electron/main.cjs',import.meta.url),'utf8');
-  assert.match(entry,/HTML 预览/);
+  assert.doesNotMatch(entry,/HTML 预览/);
+  assert.doesNotMatch(entry,/data-kuaixue-html-preview/);
+  assert.doesNotMatch(run,/预览作品/);
   assert.match(entry,/kuaixue-workbench-workspace/);
   assert.match(entry,/kuaixue-open-html-preview/);
   assert.match(entry,/data-task-item-key/);
-  assert.match(entry,/data-kuaixue-html-preview/);
   assert.match(preview,/window\.parent\.postMessage/);
   assert.match(builder,/__kuaixueOpenCourseHtmlPreview/);
   assert.match(run,/setPreviewFile\(event\.data\.file\)/);
   assert.match(main,/authorizedWorkspaceDirectory/);
   assert.match(main,/rememberWorkspaceRoot/);
+});
+
+test('画布会从服务端恢复已完成的生成结果',()=>{
+  const platform=readFileSync(new URL('../apps/api/course-platform.mjs',import.meta.url),'utf8');
+  const actions=readFileSync(new URL('../apps/api/course-actions.mjs',import.meta.url),'utf8');
+  const client=readFileSync(new URL('../src/services/courseClient.js',import.meta.url),'utf8');
+  const run=readFileSync(new URL('../src/ui/CourseRun.jsx',import.meta.url),'utf8');
+  const canvas=readFileSync(new URL('../vendor/academy-canvas/index.jsx',import.meta.url),'utf8');
+  assert.match(platform,/generationState/);
+  assert.match(actions,/'\/api\/v1\/generations\/status'/);
+  assert.match(client,/generateTracked/);
+  assert.match(client,/generations\/status/);
+  assert.match(run,/recoverGeneration/);
+  assert.match(canvas,/recoveredGenerationNodesRef/);
 });

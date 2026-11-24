@@ -50,6 +50,12 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
     return courseClient.quotePreview({id:run.id,nodeId,modality:modality==='MUSIC'?'AUDIO':modality,input});
   },[run.id]);
   const uploadAsset = useCallback(file => courseClient.uploadAsset ? courseClient.uploadAsset(run.id,file) : uploadPreviewAsset(file),[run.id]);
+  const recoverGeneration = useCallback(async ({nodeId}) => {
+    const state=await courseClient.generationStatus({id:run.id,nodeId});
+    if(!state?.jobId||state.status==='NONE'||state.status==='FAILED') return null;
+    if(state.status==='COMPLETE'&&state.asset) return state.asset;
+    return courseClient.generateTracked({id:run.id,nodeId,jobId:state.jobId});
+  },[run.id]);
   const stopLocal = useCallback(async()=>{
     const lease=localLeaseRef.current;
     if(!lease) return;
@@ -249,11 +255,11 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
     <header className="course-caption"><button disabled={busy} onClick={async()=>{if(await save()) close();}}>‹ 返回课程</button>
       <span>{run.course.title}</span>
       {!canvas&&localDirectory ? <button disabled={busy} onClick={()=>window.kuaixueDesktop?.vibe?.openLocalFolder({directory:localDirectory}).catch(error=>setNotice(error.message))}>打开工程目录</button> : null}
-      {!canvas ? <button disabled={busy} onClick={()=>setPreviewOpen(open=>!open)}>{previewOpen?'关闭预览':'预览作品'}</button> : null}
       <button disabled={busy} onClick={save}>保存</button><output aria-live="polite">{notice}</output></header>
     {canvas ? <CourseCanvas course={run.course} initial={initial} onChange={onChange} beforeGenerate={beforeGenerate} quoteGeneration={quoteGeneration}
+      recoverGeneration={recoverGeneration}
       onUploadFiles={uploadAsset}
-      onGenerateNode={run.generationModes?.length ? ({nodeId})=>courseClient.generate({id:run.id,jobId:quotes.current.get(nodeId)}) : undefined}/>
+      onGenerateNode={run.generationModes?.length ? ({nodeId})=>courseClient.generateTracked({id:run.id,nodeId,jobId:quotes.current.get(nodeId)}) : undefined}/>
     : frameUrl ? <div className={`course-workbench-shell${previewOpen?' has-preview':''}`}>
       <div className="course-workbench-main">
         <iframe ref={frameRef} className="course-workbench" title="快学 VibeCoding 工作台" referrerPolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads allow-forms allow-modals" src={frameUrl}/>
