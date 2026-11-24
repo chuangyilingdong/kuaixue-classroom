@@ -316,6 +316,7 @@ async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
       KUAIXUE_BROWSER_EXECUTABLE:browser||'',
       ZCODE_BUILTIN_PROVIDER_CONFIG_FILE:providerConfig,
       ZCODE_PERSONAL_PROVIDER_CONFIG_FILE:path.join(profile,'.zcode','v2','provider_config.json'),
+      NODE_PATH:path.join(runtimeDir,'node_modules'),
       ...(fs.existsSync(runtimeHost)?{ZCODE_RUNTIME_HOST_PATH:runtimeHost,ZCODE_SERVER_RUNTIME_ROOT:runtimeDir}:{}),
       ELECTRON_RUN_AS_NODE:'1',ZCODE_SERVER_AUTH_TOKEN:token,PORT:String(runtimePort),
     },resourceRoot);

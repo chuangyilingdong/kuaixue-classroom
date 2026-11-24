@@ -36,14 +36,9 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
   const [workspaceState,setWorkspaceState] = useState(canvas || run.lease ? 'ready' : 'preparing');
   const [localLease,setLocalLease] = useState(null);
   const [localDirectory,setLocalDirectory] = useState('');
-  const [previewFile,setPreviewFile] = useState('');
   const [modelUsage,setModelUsage] = useState(null);
-  const [previewOpen,setPreviewOpen] = useState(false);
-  const [previewUrl,setPreviewUrl] = useState('');
-  const [previewRevision,setPreviewRevision] = useState(0);
   const localLeaseRef = useRef(null);
   const gatewayRef = useRef(null);
-  const previewMtimeRef = useRef(0);
   const frameRef = useRef(null);
   const onChange = useCallback(snapshot => {work.current=snapshot;},[]);
   const quoteGeneration = useCallback(async ({nodeId,modality,input}) => {
@@ -151,26 +146,6 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
     return ()=>frame.removeEventListener('load',sendUsage);
   },[canvas,frameUrl,modelUsage]);
   useEffect(()=>{
-    if(canvas||!localLease||!previewOpen) return undefined;
-    let cancelled=false;
-    async function refreshPreview(){
-      try {
-        const next=await window.kuaixueDesktop?.vibe?.previewLocal({
-          runId:run.id,lease:localLease,knownMtime:previewMtimeRef.current,
-          ...(localDirectory?{directory:localDirectory}:{}),...(previewFile?{file:previewFile}:{}),
-        });
-        if(cancelled||!next) return;
-        previewMtimeRef.current=next.mtimeMs||0;
-        if(!next.unchanged&&next.url) setPreviewUrl(`${next.url}${next.url.includes('?')?'&':'?'}v=${Math.round(next.mtimeMs||Date.now())}`);
-      } catch(error) {
-        if(!cancelled) setNotice(`预览暂不可用：${error.message}`);
-      }
-    }
-    void refreshPreview();
-    const timer=setInterval(refreshPreview,2500);
-    return ()=>{cancelled=true;clearInterval(timer);};
-  },[canvas,localDirectory,localLease,previewFile,previewOpen,previewRevision,run.id]);
-  useEffect(()=>{
     function workbenchError(event){
       if(event.source!==frameRef.current?.contentWindow||event.data?.type!=='kuaixue-workbench-error')return;
       if(typeof event.data.message==='string'&&event.data.message)setNotice(event.data.message);
@@ -213,16 +188,6 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
       if(event.data?.type==='kuaixue-workbench-workspace'&&typeof event.data.directory==='string'&&
           event.data.directory.length<=4096) {
         setLocalDirectory(event.data.directory);
-        setPreviewFile('');
-        previewMtimeRef.current=0;
-        return;
-      }
-      if(event.data?.type==='kuaixue-open-html-preview'&&typeof event.data.directory==='string'&&
-          typeof event.data.file==='string'&&event.data.directory.length<=4096&&event.data.file.length<=4096) {
-        setLocalDirectory(event.data.directory);
-        setPreviewFile(event.data.file);
-        previewMtimeRef.current=0;
-        setPreviewOpen(true);
       }
     }
     window.addEventListener('message',workbenchPreview);
@@ -260,19 +225,10 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
       recoverGeneration={recoverGeneration}
       onUploadFiles={uploadAsset}
       onGenerateNode={run.generationModes?.length ? ({nodeId})=>courseClient.generateTracked({id:run.id,nodeId,jobId:quotes.current.get(nodeId)}) : undefined}/>
-    : frameUrl ? <div className={`course-workbench-shell${previewOpen?' has-preview':''}`}>
+    : frameUrl ? <div className="course-workbench-shell">
       <div className="course-workbench-main">
         <iframe ref={frameRef} className="course-workbench" title="快学 VibeCoding 工作台" referrerPolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads allow-forms allow-modals" src={frameUrl}/>
       </div>
-      {previewOpen ? <aside className="course-preview-pane" aria-label="作品预览">
-        <header><strong>作品预览</strong><span>{localDirectory?(previewFile.split(/[\\/]/).pop()||'index.html'):'等待工作区'}</span>
-          <button type="button" onClick={()=>setPreviewRevision(value=>value+1)}>刷新</button>
-          <button type="button" onClick={()=>setPreviewOpen(false)}>关闭</button>
-        </header>
-        {previewUrl ? <iframe className="course-preview-frame" title="课程 HTML 作品预览" referrerPolicy="no-referrer"
-          sandbox="allow-scripts allow-forms allow-modals allow-downloads" src={previewUrl}/>
-          : <p role="status">{localDirectory?'正在加载作品预览…':'正在准备工程目录…'}</p>}
-      </aside> : null}
     </div>
     : <p role="alert" className="course-runtime-loading">{workspaceState==='preparing'?'正在打开工作区…':'工作台未连接，请返回课程后重试。'}</p>}
   </section>;

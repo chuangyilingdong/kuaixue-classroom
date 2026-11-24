@@ -109,23 +109,30 @@ async function loadCourseSource(id) {
     if (!quota.test(source)) throw Error('ZCode 课程模型栏额度结构变化，请核对课程适配');
     return source.replace(quota,'  const classroomQuotaLabel = "";');
   }
-  if (resolve(id) === resolve(root,'../ui/src/hooks/useAppPanels.ts')) {
+  if (resolve(id) === resolve(root,'../ui/src/lib/assistantPreviewCards.ts')) {
     const source = await readFile(id, 'utf8');
-    const hook = 'const prepareWorkPreview = platform?.classroom?.prepareWorkPreview;';
-    const payload = /const payload: EmbeddedBrowserOpenUrlRequest =\r?\n\s*typeof request === "string" \? \{ url: request, disposition: "foreground-tab" \} : request;/;
-    const payloadMatch = source.match(payload);
-    if (!payloadMatch) throw Error('ZCode 浏览器打开入口变化，请核对课程适配');
-    const patched = source.replace(payload, `${payloadMatch[0]}
-      const openCourseHtml = (globalThis as typeof globalThis & {
-        __kuaixueOpenCourseHtmlPreview?: (url: string) => boolean;
-      }).__kuaixueOpenCourseHtmlPreview;
-      if (/^file:.*\\.html?(?:[?#].*)?$/iu.test(payload.url) && openCourseHtml?.(payload.url)) return;`);
-    // ZCode 4.x 的 HTML 产物预览已经统一走 browser side pane。课堂仍保留自己的
-    // 受保护静态预览，后续通过平台回调接入；不再依赖已经移除的旧 hook。
-    if (!patched.includes(hook)) return patched;
-    return patched.replace(hook, `const classroom = platform?.classroom as {openCourseHtmlPreview?(url: string): boolean} | undefined;
-      if (classroom?.openCourseHtmlPreview?.(payload.url)) return;
-      ${hook}`);
+    const matcher = /export function shouldOpenAssistantHtmlInBrowser\([\s\S]*?\n}\n/;
+    if (!matcher.test(source)) throw Error('ZCode HTML 产物打开入口变化，请核对课程适配');
+    return source.replace(matcher,`export function shouldOpenAssistantHtmlInBrowser(): boolean {
+  return false;
+}
+`);
+  }
+  if (resolve(id) === resolve(root,'../ui/src/previewPaneContent.tsx')) {
+    const source = await readFile(id, 'utf8');
+    const language = '  const fileLanguage = inferCodeLanguage(source.path, filePreview.content);';
+    if (!source.includes(language)) throw Error('ZCode 文件预览语言入口变化，请核对课程适配');
+    return source.replace(language,`${language}
+  if (source.type !== "code-review" && fileLanguage === "html") {
+    return (
+      <iframe
+        title={source.title}
+        srcDoc={filePreview.content}
+        sandbox="allow-scripts allow-forms allow-modals allow-downloads allow-popups"
+        className="h-full w-full border-0 bg-white"
+      />
+    );
+  }`);
   }
   if (!serviceHooks.has(resolve(id))) return null;
   const source = await readFile(id,'utf8');

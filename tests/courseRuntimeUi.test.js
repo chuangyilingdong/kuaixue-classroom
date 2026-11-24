@@ -71,30 +71,36 @@ test('Vibe 剩余次数放在输入框底栏，耗尽时禁用发送并实时刷
   assert.match(local,/usageLimit:String\(gateway\.usage\.limit\)/);
 });
 
-test('Vibe 工作区默认不自动打开作品预览',()=>{
+test('Vibe 工作区不再创建课程外层作品预览栏',()=>{
   const run=readFileSync(new URL('../src/ui/CourseRun.jsx',import.meta.url),'utf8');
-  assert.match(run,/const \[previewOpen,setPreviewOpen\] = useState\(false\)/);
-  assert.match(run,/type==='kuaixue-open-html-preview'/);
-  assert.match(run,/setPreviewOpen\(true\)/);
+  assert.doesNotMatch(run,/course-preview-pane/);
+  assert.doesNotMatch(run,/kuaixue-open-html-preview/);
+  assert.doesNotMatch(run,/previewOpen/);
 });
 
-test('点击产物文件打开课程侧边栏，不注入额外 HTML 预览按钮',()=>{
+test('点击 HTML 产物使用 ZCode 原生侧栏渲染，不注入额外预览入口',()=>{
   const run=readFileSync(new URL('../src/ui/CourseRun.jsx',import.meta.url),'utf8');
   const entry=readFileSync(new URL('../integrations/vibecoding/course-entry.tsx',import.meta.url),'utf8');
-  const preview=readFileSync(new URL('../integrations/vibecoding/course-html-preview.mjs',import.meta.url),'utf8');
   const builder=readFileSync(new URL('../scripts/build-vibe-workbench.mjs',import.meta.url),'utf8');
-  const main=readFileSync(new URL('../electron/main.cjs',import.meta.url),'utf8');
   assert.doesNotMatch(entry,/HTML 预览/);
   assert.doesNotMatch(entry,/data-kuaixue-html-preview/);
+  assert.doesNotMatch(entry,/openCourseHtmlPreview/);
   assert.doesNotMatch(run,/预览作品/);
-  assert.match(entry,/kuaixue-workbench-workspace/);
-  assert.match(entry,/kuaixue-open-html-preview/);
-  assert.match(entry,/data-task-item-key/);
-  assert.match(preview,/window\.parent\.postMessage/);
-  assert.match(builder,/__kuaixueOpenCourseHtmlPreview/);
-  assert.match(run,/setPreviewFile\(event\.data\.file\)/);
-  assert.match(main,/authorizedWorkspaceDirectory/);
-  assert.match(main,/rememberWorkspaceRoot/);
+  assert.match(builder,/shouldOpenAssistantHtmlInBrowser/);
+  assert.match(builder,/fileLanguage === "html"/);
+  assert.match(builder,/srcDoc=\{filePreview\.content\}/);
+  assert.doesNotMatch(builder,/__kuaixueOpenCourseHtmlPreview/);
+});
+
+test('Vibe 冷启动显示课程加载层，且正式包携带 Playwright 运行时',()=>{
+  const entry=readFileSync(new URL('../integrations/vibecoding/course-entry.tsx',import.meta.url),'utf8');
+  const local=readFileSync(new URL('../electron/course-local-vibe.cjs',import.meta.url),'utf8');
+  const pkg=JSON.parse(readFileSync(new URL('../package.json',import.meta.url),'utf8'));
+  assert.match(entry,/kuaixueWorkspaceLoading/);
+  assert.match(entry,/正在恢复课堂项目与对话/);
+  assert.match(local,/NODE_PATH:path\.join\(runtimeDir,'node_modules'\)/);
+  assert.ok(pkg.build.extraResources.some(item=>
+    item.from==='release/vibe-local-runtime/node_modules'&&item.to==='vibe-local-runtime/node_modules'));
 });
 
 test('画布会从服务端恢复已完成的生成结果',()=>{

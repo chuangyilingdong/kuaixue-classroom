@@ -86,6 +86,13 @@
         ]
       },
       {
+        "from": "release/vibe-local-runtime/node_modules",
+        "to": "vibe-local-runtime/node_modules",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
         "from": "release/vibe-course-web",
         "to": "vibe-course-web",
         "filter": [

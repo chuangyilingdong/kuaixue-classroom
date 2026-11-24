@@ -3,14 +3,10 @@ import { createRoot } from "react-dom/client";
 import { Root, AppErrorBoundary, ZCodeIntlProvider, generateMobileDeviceFingerprint, setStreamClientId } from "@zcode/ui";
 import "@zcode/ui/styles.css";
 import 'kuaixue-classroom-font.css';
-import 'kuaixue-course-preview.css';
-import { createCourseHtmlPreview } from 'kuaixue-course-html-preview';
 import { connectViaWebSocket } from "@zcode/client";
 import type { IPlatformService, RemoteTarget } from "@zcode/shared";
 
-type CourseWebPlatform = IPlatformService & {
-  classroom: NonNullable<IPlatformService['classroom']> & {openCourseHtmlPreview: (url: string) => boolean};
-};
+type CourseWebPlatform = IPlatformService;
 
 let dialogRequestId = 0;
 type CourseUsage = {limit:number;used:number;remaining:number|null};
@@ -53,20 +49,6 @@ function chooseClassroomPaths(kind: 'directory' | 'file', multiple = false): Pro
   });
 }
 
-function workspaceFileUrl(path: string) {
-  const url = new URL('file:///');
-  url.pathname = `/${path.replaceAll('\\', '/')}`;
-  return url.href;
-}
-
-type ClassroomWindowMessage = {
-  type:string;
-  directory?:string;
-  file?:string;
-  requestId?:string;
-  usage?:{limit?:number;used?:number;remaining?:number|null};
-};
-
 function normalizeCourseUsage(limitValue: unknown, usedValue: unknown): CourseUsage | null {
   const limit = Number(limitValue);
   const used = Number(usedValue);
@@ -81,71 +63,9 @@ function readCourseUsage(source: URLSearchParams): CourseUsage | null {
   return normalizeCourseUsage(limit,used);
 }
 
-function postToClassroom(message: ClassroomWindowMessage) {
-  window.parent.postMessage(message, '*');
-}
-
-function initialWorkspacePath() {
-  return (window as typeof window & {__kuaixueInitialWorkspace?:string}).__kuaixueInitialWorkspace || '';
-}
-
-function activeWorkspacePath(fallback = '') {
-  const declared = document.querySelector<HTMLElement>('[data-testid="workspace-path"][data-workspace-abs-path]')
-    ?.getAttribute('data-workspace-abs-path')?.trim();
-  if (declared) return declared;
-  const selected = document.querySelector<HTMLElement>('[data-task-item-key].bg-selected')
-    || document.querySelector<HTMLElement>('[data-task-item-key][aria-current="true"]');
-  const key = selected?.getAttribute('data-task-item-key')?.trim();
-  if (!key) return fallback;
-  const separator = key.lastIndexOf(':');
-  return separator > 1 ? key.slice(0, separator) : fallback;
-}
-
-function fileUrlPath(url: string) {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== 'file:' || parsed.host) return '';
-    return decodeURIComponent(parsed.pathname).replace(/^\/(?=[A-Za-z]:\/)/,'');
-  } catch {
-    return '';
-  }
-}
-
-function openCourseHtmlInClassroom(url: string) {
-  const directory = activeWorkspacePath();
-  const file = fileUrlPath(url);
-  if (!directory || !file || !/\.html?$/i.test(file)) return false;
-  postToClassroom({type:'kuaixue-open-html-preview',requestId:`html-${Date.now()}`,directory,file});
-  return true;
-}
-
-(globalThis as typeof globalThis & {
-  __kuaixueOpenCourseHtmlPreview?: (url: string) => boolean;
-}).__kuaixueOpenCourseHtmlPreview = openCourseHtmlInClassroom;
-
-function mountCourseWorkspaceActions() {
-  let lastWorkspace = '';
-  function sync() {
-    const directory = activeWorkspacePath(initialWorkspacePath());
-    if (directory && directory !== lastWorkspace) {
-      lastWorkspace = directory;
-      postToClassroom({type:'kuaixue-workbench-workspace',directory});
-    }
-  }
-
-  const observer = new MutationObserver(sync);
-  observer.observe(document.documentElement, {
-    childList:true,
-    subtree:true,
-    attributes:true,
-    attributeFilter:['class','data-workspace-abs-path'],
-  });
-  sync();
-}
-
-function createWebPlatform(presets, openCourseHtmlPreview): CourseWebPlatform {
+function createWebPlatform(presets): CourseWebPlatform {
   return {
-    classroom: {openCourseHtmlPreview, getPresets:async () => presets,
+    classroom: {getPresets:async () => presets,
       getSnapshot:async () => courseUsage ? {
         quota:{
           limit:courseUsage.limit===0?null:courseUsage.limit,
@@ -205,10 +125,8 @@ function createWebPlatform(presets, openCourseHtmlPreview): CourseWebPlatform {
     canOpenCommunity: async () => false,
     openInFileManager: () =>
       Promise.resolve({ success: false, error: "Not supported in web mode" }),
-    openExternalFile: (path: string) =>
-      Promise.resolve(openCourseHtmlPreview(workspaceFileUrl(path))
-        ? { success: true }
-        : { success: false, error: "课程工作区只预览 HTML 文件" }),
+    openExternalFile: () =>
+      Promise.resolve({ success: false, error: "请从 ZCode 文件预览打开课程作品" }),
     registerOAuthState: (_payload) => {},
     onOAuthCallback: () => () => {},
     onPaymentCallback: () => () => {},
@@ -283,7 +201,36 @@ function createWebPlatform(presets, openCourseHtmlPreview): CourseWebPlatform {
   };
 }
 
+function mountWorkspaceLoading() {
+  const overlay=document.createElement('div');
+  overlay.dataset.kuaixueWorkspaceLoading='true';
+  overlay.innerHTML='<div style="display:grid;gap:12px;justify-items:center"><img src="/kuaixue/workbench/kx-class-lockup.png" alt="" style="width:132px;height:auto"><strong data-kx-loading-text style="font-size:15px;font-weight:600">正在打开课程工作区…</strong><span style="font-size:12px;opacity:.62">正在恢复课堂项目与对话</span></div>';
+  Object.assign(overlay.style,{
+    position:'fixed',inset:'0',zIndex:'2147483647',display:'grid',placeItems:'center',
+    background:'#161616',color:'#f1f1f3',fontFamily:'system-ui,sans-serif',pointerEvents:'all',
+  });
+  document.body.append(overlay);
+  return {
+    ready(){
+      let readySince=0;
+      const timer=setInterval(()=>{
+        const shellReady=document.querySelector('[data-testid="v4-composer-input"],[data-testid="chat-input"],[data-testid="new-task-draft-drop-mask"]');
+        if(shellReady&&!readySince)readySince=Date.now();
+        if(shellReady&&Date.now()-readySince>=1500){
+          clearInterval(timer);
+          overlay.remove();
+        }
+      },100);
+    },
+    fail(message:string){
+      const text=overlay.querySelector('[data-kx-loading-text]');
+      if(text)text.textContent=message;
+    },
+  };
+}
+
 const root = createRoot(document.getElementById('root')!);
+const workspaceLoading=mountWorkspaceLoading();
 const launch = new URLSearchParams(location.hash.slice(1));
 history.replaceState(null, '', location.pathname);
 function reportToClassroom(message: string) {
@@ -337,16 +284,18 @@ async function enterCourse() {
   setStreamClientId(generateMobileDeviceFingerprint());
   root.render(<AppErrorBoundary><ZCodeIntlProvider settingService={services.settingService} broadcastService={services.broadcastService}>
     {!modelsReady && <div role="status" style={{position:'fixed',top:0,right:12,zIndex:10,pointerEvents:'none'}}>课程工程可编辑 · AI 生成未开放</div>}
-    <Root services={services} platform={createWebPlatform(runtime.presets ?? [], createCourseHtmlPreview(services.fileService, runtime.workspacePath, runtime.previewToken))} initialWorkspaceAbsPath={runtime.workspacePath}
+    <Root services={services} platform={createWebPlatform(runtime.presets ?? [])} initialWorkspaceAbsPath={runtime.workspacePath}
       initialWorkspaceIdentity={runtime.workspaceIdentity} initialWorkspacePurpose="project"
       initialTaskDraft={initialProjectId ? {projectId: initialProjectId} : undefined}
       restoreSession allowOpenWorkspace
       supportsSettings={false} preferDirectoryBrowser={false} supportsEmbeddedBrowser={false} allowRemoteWorkspace={false} />
   </ZCodeIntlProvider></AppErrorBoundary>);
-  mountCourseWorkspaceActions();
+  workspaceLoading.ready();
 }
 root.render(<p role="status">正在打开课程工作区…</p>);
 void enterCourse().catch(error => {
-  reportToClassroom(error instanceof Error ? error.message : '课程工作区连接失败');
+  const message=error instanceof Error ? error.message : '课程工作区连接失败';
+  workspaceLoading.fail(message);
+  reportToClassroom(message);
   root.render(<p role="alert">课程工作区连接失败，请返回课程后重试。</p>);
 });
