@@ -109,6 +109,30 @@ test('published version stores model-family display labels without exposing full
   assert.ok(!course.modelLabels.some(label=>label.includes('::')));
 });
 
+test('published version stores up to five covers, selected category and safe rich introduction',()=>{
+  const galleryImages=Array.from({length:5},(_,index)=>({
+    url:`https://cdn.example/cover-${index+1}.png`,
+    alt:`封面 ${index+1}`,
+  }));
+  const course=versioning.buildCourseVersion({
+    title:'富文本课程',subtitle:'课程摘要',introHtml:'<h2>课程介绍</h2><p>正文</p><img src="https://cdn.example/intro.png" onerror="alert(1)"><script>alert(1)</script><video src="https://cdn.example/intro.mp4"></video>',
+    price:1,category:'视觉设计',level:'进阶',durationMinutes:35,
+    permittedDeliveryModes:['CANVAS'],materialGroups:[],steps:[],
+    galleryImages,
+  });
+  assert.equal(course.category,'视觉设计');
+  assert.equal(course.level,'进阶');
+  assert.equal(course.durationMinutes,35);
+  assert.deepEqual(course.galleryImages,galleryImages);
+  assert.equal(course.thumbnailUrl,galleryImages[0].url);
+  assert.match(course.introHtml,/<video\b/);
+  assert.doesNotMatch(course.introHtml,/script|onerror/i);
+  assert.throws(()=>versioning.buildCourseVersion({
+    title:'超出封面',subtitle:'课程摘要',price:0,permittedDeliveryModes:['CANVAS'],steps:[],materialGroups:[],
+    galleryImages:[...galleryImages,{url:'https://cdn.example/cover-6.png'}],
+  }),/最多上传 5 张/);
+});
+
 test('an edited legacy version retains per-type defaults and can explicitly disable a single box', async (t) => {
   const platform = openCoursePlatform(':memory:', {
     quoteGeneration: async () => ({ quoteId: 'q', points: 0, expiresAt: Date.now() + 10000 }),

@@ -102,7 +102,7 @@ export function normalizeCourseItem(item) {
 
 function normalizeImages(images) {
   if (!Array.isArray(images)) return [];
-  return images.map(image => {
+  return images.slice(0, 5).map(image => {
     if (!image || typeof image !== "object") throw new Error("Course image is invalid.");
     const url = normalizeMediaUrl(image.url,"image.url");
     return url ? { url, alt: String(image.alt || "") } : null;
@@ -141,6 +141,7 @@ export function normalizeCourseDetail(item) {
   }
   return {
     ...course,
+    introHtml: typeof item.introHtml === "string" ? item.introHtml : "",
     galleryImages: normalizeImages(item.galleryImages),
     introImages: normalizeImages(item.introImages),
     mediaCredit: String(item.mediaCredit || ""),

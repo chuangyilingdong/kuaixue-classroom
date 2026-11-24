@@ -98,6 +98,11 @@ test("version detail preserves VibeCoding model snapshot and learning metadata",
       id:"course-1",versionId:"464e75e8-784f-4c50-8edb-456cd90d54c4",title:"测试一下",type:"VIBECODING",
       unlockPricePoints:1,durationMinutes:48,thumbnailUrl:"https://cdn.example/cover.png",bannerUrl:"/api/media/banner.png",
       coverFocus:{x:40,y:60},vibeModelIds,permittedDeliveryModes:["CANVAS","VIBECODING"],
+      introHtml:"<h2>课程介绍</h2><video src=\"https://cdn.example/intro.mp4\"></video>",
+      galleryImages:[
+        {url:"https://cdn.example/cover.png",alt:"主封面"},
+        {url:"https://cdn.example/cover-2.png",alt:"第二张"},
+      ],
       classroomConfig:{vibeCoding:{presetPrompts:[{title:"预设",text:"按版本执行"}]}},
       learningObjectives:["目标一"],assets:[{url:"https://cdn.example/video.mp4"}],
       steps:[{id:"one",title:"创作",description:"执行",deliverable:"作品"}],
@@ -111,6 +116,8 @@ test("version detail preserves VibeCoding model snapshot and learning metadata",
   assert.equal(detail.thumbnailUrl,"https://cdn.example/cover.png");
   assert.equal(detail.bannerUrl,"/api/media/banner.png");
   assert.equal(detail.coverPosition,"40% 60%");
+  assert.match(detail.introHtml,/<video\b/);
+  assert.equal(detail.galleryImages.length,2);
 });
 
 test("course display uses backend model-family labels instead of full channel IDs",()=>{

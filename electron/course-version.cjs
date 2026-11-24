@@ -18,8 +18,32 @@ function text(value, label, limit = 300) {
   if (typeof value !== 'string' || !value.trim() || value.length > limit) throw new Error(`请检查${label}`);
   return value.trim();
 }
+function richText(value, label, limit = 200000) {
+  if (value == null || value === '') return '';
+  if (typeof value !== 'string' || value.length > limit) throw new Error(`请检查${label}`);
+  const safe = value
+    .replace(/<\s*(script|style|iframe|object|embed|form|input|button|textarea|select|option|meta|link)\b[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
+    .replace(/<\s*(script|style|iframe|object|embed|form|input|button|textarea|select|option|meta|link)\b[^>]*\/?>/gi, '')
+    .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/\s(href|src|poster)\s*=\s*(["'])\s*(?:javascript|vbscript|data):[\s\S]*?\2/gi, ' $1=$2#$2');
+  return safe.trim();
+}
+function coverImages(value, title) {
+  if (value == null) return [];
+  if (!Array.isArray(value) || value.length > 5) throw new Error('课程封面最多上传 5 张');
+  const seen = new Set();
+  return value.map((image, index) => {
+    const url = text(typeof image === 'string' ? image : image?.url, `课程封面 ${index + 1}`, 2048);
+    if (seen.has(url)) throw new Error('课程封面不能重复');
+    seen.add(url);
+    const alt = typeof image?.alt === 'string' && image.alt.trim()
+      ? image.alt.trim().slice(0, 300)
+      : `${title}封面 ${index + 1}`;
+    return { url, alt };
+  });
+}
 function validSteps(steps) {
-  if (!Array.isArray(steps) || steps.length > 60) throw new Error('课程简介最多 60 项');
+  if (!Array.isArray(steps) || steps.length > 60) throw new Error('课程步骤最多 60 项');
   const ids = new Set();
   return steps.map(step => {
     const id = text(step.id, '步骤编号', 90);
@@ -49,6 +73,18 @@ function buildCourseVersion(draft, base = {}) {
   const type = modes[0];
   if (!Number.isSafeInteger(draft.price) || draft.price < 0 || draft.price > 1000000) throw new Error('请输入有效的积分价格');
   const title = text(draft.title,'课程标题',120);
+  const subtitle = text(draft.subtitle,'课程简介',1000);
+  const galleryImages = coverImages(draft.galleryImages ?? base.galleryImages, title);
+  const existingThumbnail = String(draft.thumbnailUrl || base.thumbnailUrl || '').trim();
+  if (existingThumbnail.length > 2048) throw new Error('请检查课程封面');
+  const thumbnailUrl = galleryImages[0]?.url || existingThumbnail || null;
+  if (thumbnailUrl && !galleryImages.length) galleryImages.push({ url: thumbnailUrl, alt: `${title}封面` });
+  const introHtml = richText(draft.introHtml ?? base.introHtml, '课程详细介绍');
+  const category = text(draft.category || base.category || '创作实训','课程分类',80);
+  const level = text(draft.level || base.level || '入门','课程难度',40);
+  const rawDuration = draft.durationMinutes ?? base.durationMinutes ?? null;
+  const durationMinutes = rawDuration === '' || rawDuration == null ? null : Number(rawDuration);
+  if (durationMinutes != null && (!Number.isSafeInteger(durationMinutes) || durationMinutes < 0 || durationMinutes > 100000)) throw new Error('请输入有效的预计时长');
   const models = modes.includes('CANVAS') ? modelPolicy(draft.modelPolicy ?? base.modelPolicy) : [];
   const ids = modes.includes('VIBECODING') ? (draft.vibeModelIds ?? base.vibeModelIds ?? []) : [];
   if (!Array.isArray(ids) || ids.length > 30) throw Error('请检查 VibeCoding 模型清单');
@@ -56,7 +92,7 @@ function buildCourseVersion(draft, base = {}) {
   const suppliedLabels=modelLabels(draft.vibeModelLabels ?? base.vibeModelLabels);
   const vibeModelLabels=Object.fromEntries(vibeModelIds.map(id=>[id,suppliedLabels[id]||displayModelLabel(id)]));
   const suppliedModelLabels=Array.isArray(draft.modelLabels)?draft.modelLabels.map(label=>text(label,'模型显示名称',120)):[];
-  const course = { ...base, id, versionId: randomUUID(), title, subtitle: text(draft.subtitle,'课程简介',1000), type, category: base.category || '创作实训', level: base.level || '入门',
+  const course = { ...base, id, versionId: randomUUID(), title, subtitle, introHtml, thumbnailUrl, galleryImages, type, category, level, durationMinutes,
     unlockPricePoints: draft.price, learningObjectives: steps.length ? [steps.at(-1).deliverable] : [], modelPolicy: models, vibeModelIds, vibeModelLabels,
     modelLabels: [...new Set([...suppliedModelLabels,...models.map(item => displayModelLabel(item.modelId)), ...Object.values(vibeModelLabels)])], assets: base.assets || [],
     steps, previewSteps: steps.map(s => s.title), permittedDeliveryModes: modes };

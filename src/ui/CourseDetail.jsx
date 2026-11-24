@@ -199,25 +199,38 @@ export default function CourseDetail({ course, close, saved, toggle, entitlement
               )}
               {detail && (
                 <>
-                  {detail.introImages.map((image, i) => (
-                    <figure key={`${i}-${image.url}`}>
-                      <Media
-                        lazy
-                        src={image.url}
-                        alt={image.alt || `${item.title}介绍图 ${i + 1}`}
-                      />
-                      {image.alt && <figcaption>{image.alt}</figcaption>}
-                    </figure>
-                  ))}
-                  {detail.mediaCredit && (
-                    <p className="media-credit">{detail.mediaCredit}</p>
+                  {detail.introHtml ? (
+                    <div
+                      className="rich-course-intro"
+                      dangerouslySetInnerHTML={{ __html: detail.introHtml }}
+                    />
+                  ) : (
+                    <>
+                      {detail.introImages.map((image, i) => (
+                        <figure key={`${i}-${image.url}`}>
+                          <Media
+                            lazy
+                            src={image.url}
+                            alt={image.alt || `${item.title}介绍图 ${i + 1}`}
+                          />
+                          {image.alt && <figcaption>{image.alt}</figcaption>}
+                        </figure>
+                      ))}
+                      {detail.mediaCredit && (
+                        <p className="media-credit">{detail.mediaCredit}</p>
+                      )}
+                      {detail.learningObjectives.length > 0 && (
+                        <>
+                          <h3>学完你将能够</h3>
+                          <ul>
+                            {detail.learningObjectives.map((text) => (
+                              <li key={text}>{text}</li>
+                            ))}
+                          </ul>
+                        </>
+                      )}
+                    </>
                   )}
-                  <h3>学完你将能够</h3>
-                  <ul>
-                    {detail.learningObjectives.map((text) => (
-                      <li key={text}>{text}</li>
-                    ))}
-                  </ul>
                   <h3>课程步骤</h3>
                   <ol className="steps">
                     {detail.steps.map((step) => (

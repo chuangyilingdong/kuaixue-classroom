@@ -924,6 +924,24 @@ button:disabled {
   font-size: 12px;
   color: var(--sub);
 }
+.rich-course-intro {
+  color: var(--muted);
+  line-height: 1.8;
+}
+.rich-course-intro img,
+.rich-course-intro video {
+  display: block;
+  width: 100%;
+  max-height: 480px;
+  margin: 18px 0;
+  border-radius: 6px;
+  object-fit: contain;
+  background: #101318;
+}
+.rich-course-intro a {
+  color: var(--accent);
+  text-decoration: underline;
+}
 .steps li {
   padding: 8px 0;
 }
