@@ -61,6 +61,9 @@ test('main-site course open signs a ticket redeemable by a separate runtime conn
   assert.match(exchanged.previewToken,/^[a-zA-Z0-9_-]{43}$/);
   assert.deepEqual(await runtime.claimPreview(exchanged.previewToken), {...version, userId:'buyer', runId:launch.runId, mode:'VIBECODING'});
   assert.deepEqual(await runtime.claimPreview(exchanged.previewToken), {...version, userId:'buyer', runId:launch.runId, mode:'VIBECODING'});
+  const parentPreviewToken=await runtime.issuePreview({...version,userId:'buyer',runId:launch.runId,mode:'VIBECODING'});
+  assert.match(parentPreviewToken,/^[a-zA-Z0-9_-]{43}$/);
+  assert.deepEqual(await runtime.claimPreview(parentPreviewToken), {...version, userId:'buyer', runId:launch.runId, mode:'VIBECODING'});
   await assert.rejects(runtime.exchange(launch));
   assert.deepEqual(await runtime.claimSocket(exchanged.socketId), {...version, userId:'buyer', runId:launch.runId, mode:'VIBECODING'});
   await assert.rejects(runtime.claimSocket(exchanged.socketId));
@@ -70,6 +73,7 @@ test('main-site course open signs a ticket redeemable by a separate runtime conn
   assert.equal(platform.revoke(purchase.orderId, `free-${purchase.orderId}`), 1);
   await assert.rejects(runtime.exchange({runId:second.id, ticket:second.runtimeTicket}));
   await assert.rejects(runtime.claimPreview(exchanged.previewToken));
+  await assert.rejects(runtime.claimPreview(parentPreviewToken));
 });
 
 test('unset ticket store still permits local-first Vibe runs and configured paths must be separate', async t => {
@@ -92,7 +96,8 @@ test('本机运行只领取当前已购版本的短期模型授权', async t => 
   const platform=openCoursePlatform(join(dir,'course.sqlite'),{
     issueRuntimeTicket:()=> 'r'.repeat(43),
     issueLocalModelGrant:context=>({baseUrl:'https://model.aicyld.com.cn/v1',token:'local-grant',
-      modelIds:['model-a'],expiresAt:Date.now()+60000,context}),
+      modelIds:['model-a'],expiresAt:Date.now()+60000,context,
+      usageLimit:0,usageUsed:0,usageRemaining:null}),
   });
   t.after(()=>{platform.close();rmSync(dir,{recursive:true,force:true});});
   const course=platform.publish('operator',{title:'本机课',subtitle:'混合运行',price:0,
@@ -106,7 +111,8 @@ test('本机运行只领取当前已购版本的短期模型授权', async t => 
   assert.equal(local.runId,run.id);
   assert.equal(local.presets[0].text,'本机执行');
   assert.deepEqual(local.modelGateway,{baseUrl:'https://model.aicyld.com.cn/v1',token:'local-grant',
-    modelIds:['model-a'],expiresAt:local.modelGateway.expiresAt});
+    modelIds:['model-a'],expiresAt:local.modelGateway.expiresAt,
+    usage:{limit:0,used:0,remaining:null}});
   await assert.rejects(platform.localRuntime('other',{id:run.id}),{status:403});
 });
 
@@ -117,7 +123,8 @@ test('旧课程从已发布模型标签推导本机运行模型，不接受任�
   const platform=openCoursePlatform(join(dir,'course.sqlite'),{
     issueRuntimeTicket:()=> 'r'.repeat(43),
     issueLocalModelGrant:context=>{requested=context;return{baseUrl:'https://model.aicyld.com.cn/v1',
-      token:'local-grant',modelIds:context.modelIds,expiresAt:Date.now()+60000};},
+      token:'local-grant',modelIds:context.modelIds,expiresAt:Date.now()+60000,
+      usageLimit:0,usageUsed:0,usageRemaining:null};},
   });
   t.after(()=>{platform.close();rmSync(dir,{recursive:true,force:true});});
   const course=platform.publish('operator',{title:'旧版课程',subtitle:'兼容',price:0,

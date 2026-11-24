@@ -71,7 +71,14 @@ export function createCourseClient({ base, vibeOrigin, parentOrigin, fetchImpl =
       const gateway=data?.modelGateway;
       if (data?.runId !== id || typeof data?.userId !== 'string' || !gateway || typeof gateway.baseUrl !== 'string' ||
           typeof gateway.token !== 'string' || !gateway.token || !Number.isSafeInteger(gateway.expiresAt) ||
-          !Array.isArray(gateway.modelIds) || !gateway.modelIds.length) throw new Error('本机模型授权无效。');
+          !Array.isArray(gateway.modelIds) || !gateway.modelIds.length ||
+          !gateway.usage || !Number.isSafeInteger(gateway.usage.limit) || gateway.usage.limit < 0 ||
+          !Number.isSafeInteger(gateway.usage.used) || gateway.usage.used < 0 ||
+          gateway.usage.used > gateway.usage.limit ||
+          (gateway.usage.limit > 0 && (!Number.isSafeInteger(gateway.usage.remaining) ||
+            gateway.usage.remaining < 0 || gateway.usage.remaining > gateway.usage.limit))) {
+        throw new Error('本机模型授权无效。');
+      }
       return data;
     },
     async uploadSnapshot({runId,baseRevision,bytes}) {

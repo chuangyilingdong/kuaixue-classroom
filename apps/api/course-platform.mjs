@@ -218,11 +218,18 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
         grant.modelIds.some(model => typeof model !== 'string' || !allowed.has(model))) {
       reject(503,'本机模型授权无效');
     }
+    const remaining=Number.isSafeInteger(grant.usageRemaining)?grant.usageRemaining:null;
+    if(!Number.isSafeInteger(grant.usageLimit)||grant.usageLimit<0||
+        !Number.isSafeInteger(grant.usageUsed)||grant.usageUsed<0||grant.usageUsed>grant.usageLimit||
+        (grant.usageLimit>0&&(!Number.isSafeInteger(remaining)||remaining<0||remaining>grant.usageLimit))) {
+      reject(503,'本机模型使用额度无效');
+    }
     return {
       runId:id,
       userId:user,
       presets:course.classroomConfig?.vibeCoding?.presetPrompts || [],
-      modelGateway:{baseUrl:base.href,token:grant.token,modelIds:grant.modelIds,expiresAt:grant.expiresAt},
+      modelGateway:{baseUrl:base.href,token:grant.token,modelIds:grant.modelIds,expiresAt:grant.expiresAt,
+        usage:{limit:grant.usageLimit,used:grant.usageUsed,remaining:grant.usageLimit===0?null:remaining}},
     };
   }
   async function uploadLocalSnapshotRecord(user,{runId,baseRevision,sha256,bytes}) {

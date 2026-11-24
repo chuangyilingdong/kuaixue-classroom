@@ -36,7 +36,13 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
   const [workspaceState,setWorkspaceState] = useState(canvas || run.lease ? 'ready' : 'preparing');
   const [localLease,setLocalLease] = useState(null);
   const [localDirectory,setLocalDirectory] = useState('');
+  const [modelUsage,setModelUsage] = useState(null);
+  const [previewOpen,setPreviewOpen] = useState(!canvas);
+  const [previewUrl,setPreviewUrl] = useState('');
+  const [previewRevision,setPreviewRevision] = useState(0);
   const localLeaseRef = useRef(null);
+  const gatewayRef = useRef(null);
+  const previewMtimeRef = useRef(0);
   const frameRef = useRef(null);
   const onChange = useCallback(snapshot => {work.current=snapshot;},[]);
   const quoteGeneration = useCallback(async ({nodeId,modality,input}) => {
@@ -87,6 +93,8 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
         gateway:local.modelGateway,userId:local.userId,
       });
       localLeaseRef.current=started.lease;setLocalLease(started.lease);
+      gatewayRef.current=local.modelGateway;
+      setModelUsage(local.modelGateway.usage);
       setLocalDirectory(started.directory||'');setFrameUrl(started.frameUrl);setWorkspaceState('ready');
       return true;
     } catch(error) {
@@ -100,6 +108,51 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
     void startWorkspace();
     return ()=>{if(localLeaseRef.current)void window.kuaixueDesktop?.vibe?.closeLocal(localLeaseRef.current).catch(()=>{});};
   },[canvas,run.id]);
+  useEffect(()=>{
+    if(canvas||!localLease||!gatewayRef.current) return undefined;
+    let cancelled=false;
+    async function refreshUsage(){
+      const gateway=gatewayRef.current;
+      if(!gateway) return;
+      try {
+        const base=gateway.baseUrl.endsWith('/')?gateway.baseUrl:`${gateway.baseUrl}/`;
+        const response=await fetch(new URL('models',base),{
+          headers:{Authorization:`Bearer ${gateway.token}`},cache:'no-store',
+          signal:AbortSignal.timeout(8000),
+        });
+        if(!response.ok) return;
+        const usage=(await response.json())?.usage;
+        if(cancelled||!Number.isSafeInteger(usage?.limit)||!Number.isSafeInteger(usage?.used)) return;
+        setModelUsage({
+          limit:usage.limit,
+          used:usage.used,
+          remaining:usage.limit===0?null:usage.remaining,
+        });
+      } catch {}
+    }
+    void refreshUsage();
+    const timer=setInterval(refreshUsage,5000);
+    return ()=>{cancelled=true;clearInterval(timer);};
+  },[canvas,localLease,run.id]);
+  useEffect(()=>{
+    if(canvas||!localLease||!previewOpen) return undefined;
+    let cancelled=false;
+    async function refreshPreview(){
+      try {
+        const next=await window.kuaixueDesktop?.vibe?.previewLocal({
+          runId:run.id,lease:localLease,knownMtime:previewMtimeRef.current,
+        });
+        if(cancelled||!next) return;
+        previewMtimeRef.current=next.mtimeMs||0;
+        if(!next.unchanged&&next.url) setPreviewUrl(`${next.url}${next.url.includes('?')?'&':'?'}v=${Math.round(next.mtimeMs||Date.now())}`);
+      } catch(error) {
+        if(!cancelled) setNotice(`预览暂不可用：${error.message}`);
+      }
+    }
+    void refreshPreview();
+    const timer=setInterval(refreshPreview,2500);
+    return ()=>{cancelled=true;clearInterval(timer);};
+  },[canvas,localLease,previewOpen,previewRevision,run.id]);
   useEffect(()=>{
     function workbenchError(event){
       if(event.source!==frameRef.current?.contentWindow||event.data?.type!=='kuaixue-workbench-error')return;
@@ -157,15 +210,34 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
       quotes.current.set(nodeId,offer.id);return true;
     } catch(error) {setNotice(error.message);return false;}
   }
+  const usageText=modelUsage?(modelUsage.limit===0?'不限次数':`${modelUsage.used}/${modelUsage.limit}`):'—';
   return <section className="course-surface" aria-label={canvas?'学院画布工作区':'灵动 VibeCoding 工作区'}>
     <header className="course-caption"><button disabled={busy} onClick={async()=>{if(await save()) close();}}>‹ 返回课程</button>
       <span>{run.course.title}</span>
       {!canvas&&localDirectory ? <button disabled={busy} onClick={()=>window.kuaixueDesktop?.vibe?.openLocalFolder({directory:localDirectory}).catch(error=>setNotice(error.message))}>打开工程目录</button> : null}
+      {!canvas ? <button disabled={busy} onClick={()=>setPreviewOpen(open=>!open)}>{previewOpen?'关闭预览':'预览作品'}</button> : null}
       <button disabled={busy} onClick={save}>保存</button><output aria-live="polite">{notice}</output></header>
     {canvas ? <CourseCanvas course={run.course} initial={initial} onChange={onChange} beforeGenerate={beforeGenerate} quoteGeneration={quoteGeneration}
       onUploadFiles={uploadAsset}
       onGenerateNode={run.generationModes?.length ? ({nodeId})=>courseClient.generate({id:run.id,jobId:quotes.current.get(nodeId)}) : undefined}/>
-    : frameUrl ? <iframe ref={frameRef} className="course-workbench" title="快学 VibeCoding 工作台" referrerPolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads allow-forms allow-modals" src={frameUrl}/>
+    : frameUrl ? <div className={`course-workbench-shell${previewOpen?' has-preview':''}`}>
+      <div className="course-workbench-main">
+        <iframe ref={frameRef} className="course-workbench" title="快学 VibeCoding 工作台" referrerPolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads allow-forms allow-modals" src={frameUrl}/>
+        {modelUsage ? <span className={`course-vibe-usage${modelUsage.limit>0&&modelUsage.remaining===0?' is-empty':''}`}
+          title={`本课程 VibeCoding 发送次数：已用 ${modelUsage.used}${modelUsage.limit===0?'，不限次数':` / ${modelUsage.limit}`}`}>
+          Vibe {usageText}
+        </span> : null}
+      </div>
+      {previewOpen ? <aside className="course-preview-pane" aria-label="作品预览">
+        <header><strong>作品预览</strong><span>{localDirectory?'index.html':'等待工作区'}</span>
+          <button type="button" onClick={()=>setPreviewRevision(value=>value+1)}>刷新</button>
+          <button type="button" onClick={()=>setPreviewOpen(false)}>关闭</button>
+        </header>
+        {previewUrl ? <iframe className="course-preview-frame" title="课程 HTML 作品预览" referrerPolicy="no-referrer"
+          sandbox="allow-scripts allow-forms allow-modals allow-downloads" src={previewUrl}/>
+          : <p role="status">{localDirectory?'正在加载作品预览…':'正在准备工程目录…'}</p>}
+      </aside> : null}
+    </div>
     : <p role="alert" className="course-runtime-loading">{workspaceState==='preparing'?'正在打开工作区…':'工作台未连接，请返回课程后重试。'}</p>}
   </section>;
 }

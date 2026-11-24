@@ -32,7 +32,8 @@ test('课程服务校验权益后调用主站模型授权和快照内部接口',
       grantRequest=JSON.parse((await body(req)).toString('utf8'));
       res.writeHead(200,{'Content-Type':'application/json'});
       return res.end(JSON.stringify({data:{baseUrl:'https://aicyld.com.cn/api/kuaixue-runtime/v1',
-        token:'short-lived-course-token',modelIds:grantModelIds||grantRequest.modelIds,expiresAt:Date.now()+60000}}));
+        token:'short-lived-course-token',modelIds:grantModelIds||grantRequest.modelIds,expiresAt:Date.now()+60000,
+        usageLimit:5,usageUsed:2,usageRemaining:3}}));
     }
     if(req.method==='POST'&&req.url==='/internal/kuaixue/snapshots'){
       const bytes=await body(req);
@@ -94,7 +95,9 @@ test('课程服务校验权益后调用主站模型授权和快照内部接口',
   const granted=await fetch(`${apiOrigin}/api/v1/course-runs/local-runtime`,{method:'POST',headers,
     body:JSON.stringify({id:run.id})});
   assert.equal(granted.status,200);
-  assert.deepEqual((await granted.json()).data.modelGateway.modelIds,[modelId]);
+  const grantedGateway=(await granted.json()).data.modelGateway;
+  assert.deepEqual(grantedGateway.modelIds,[modelId]);
+  assert.deepEqual(grantedGateway.usage,{limit:5,used:2,remaining:3});
   assert.deepEqual(grantRequest,{userId:'buyer',courseId:course.id,versionId:course.versionId,runId:run.id,
     mode:'VIBECODING',modelIds:[modelId],usageLimit:5});
   grantModelIds=['aicyld-runninghub-llm-cn::unlisted-model'];

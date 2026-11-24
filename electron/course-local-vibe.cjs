@@ -224,8 +224,24 @@ async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
     function snapshot() {
       return {runId:run.id,directory:workspace,html:readHtml()};
     }
+    async function preview(knownMtime=0) {
+      const target=path.join(workspace,'index.html');
+      const stat=await fsp.stat(target);
+      if(!stat.isFile()||stat.size>4_000_000) throw Error('请先生成有效的 index.html');
+      if(Number.isFinite(knownMtime)&&knownMtime===stat.mtimeMs) {
+        return {runId:run.id,unchanged:true,mtimeMs:stat.mtimeMs,size:stat.size};
+      }
+      const previewToken=await broker.issuePreview(context);
+      return {
+        runId:run.id,
+        url:`${origin}/kuaixue/runtime/preview/${previewToken}/index.html`,
+        mtimeMs:stat.mtimeMs,
+        size:stat.size,
+        unchanged:false,
+      };
+    }
     return {
-      runId:run.id,runtime:'local',lease,directory:workspace,context,snapshot,
+      runId:run.id,runtime:'local',lease,directory:workspace,context,snapshot,preview,
       frameUrl:`${origin}/kuaixue/workbench/#${new URLSearchParams({run:run.id,ticket})}`,
       close,
     };

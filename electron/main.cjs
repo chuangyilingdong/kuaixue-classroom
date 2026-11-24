@@ -144,6 +144,12 @@ ipcMain.handle('vibe:saveLocal',(event,request)=>{
   if(request?.runId!==host.runId) throw Error('本机工作区与课程不符');
   return host.snapshot();
 });
+ipcMain.handle('vibe:previewLocal',(event,request)=>{
+  trustedWindow(event,classroomWindows);
+  const host=requireCourseLocal(event.sender.id,request?.lease);
+  if(request?.runId!==host.runId) throw Error('本机工作区与课程不符');
+  return host.preview(Number(request?.knownMtime)||0);
+});
 ipcMain.handle('vibe:packLocal',async(event,request)=>{
   trustedWindow(event,classroomWindows);
   const host=requireCourseLocal(event.sender.id,request?.lease);

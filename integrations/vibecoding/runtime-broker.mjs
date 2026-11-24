@@ -52,6 +52,9 @@ export function createRuntimeBroker({filename, checkAccess, openWorkspace, now=D
     async claimPreview(token) {
       const context = lookupPreview(token); await validate(context); return context;
     },
+    async issuePreview(context) {
+      await validate(context); return issue('preview',context,8*60*60*1000);
+    },
     close:()=>db.close(),
   };
 }

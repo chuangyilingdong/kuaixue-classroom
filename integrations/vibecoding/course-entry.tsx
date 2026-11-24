@@ -61,6 +61,7 @@ function createWebPlatform(presets, openCourseHtmlPreview): CourseWebPlatform {
     canSelectFilePath: true,
     canOpenLocalFiles: true,
     selectDirectory: async () => (await chooseClassroomPaths('directory'))[0] ?? null,
+    selectDirectories: () => chooseClassroomPaths('directory', true),
     selectFile: async () => (await chooseClassroomPaths('file'))[0] ?? null,
     selectFiles: () => chooseClassroomPaths('file', true),
     getPathForFile: () => null,
