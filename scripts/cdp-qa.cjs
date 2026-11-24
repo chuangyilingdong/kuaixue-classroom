@@ -17,8 +17,15 @@ async function main() {
   });
   let id = 0;
   const pending = new Map();
+  const events = [];
   socket.on('message', raw => {
     const message = JSON.parse(raw.toString());
+    if (message.method) {
+      const method = String(message.method);
+      if (/^(Runtime\.(consoleAPICalled|exceptionThrown)|Log\.entryAdded|Network\.(loadingFailed|webSocketCreated|webSocketWillSendHandshakeRequest|webSocketHandshakeResponseReceived|webSocketFrameError|webSocketClosed))$/.test(method))
+        events.push({method,params:message.params});
+      return;
+    }
     const request = pending.get(message.id);
     if (!request) return;
     pending.delete(message.id);
@@ -50,6 +57,13 @@ async function main() {
     await send('Input.dispatchKeyEvent', {type:'keyDown', ...key});
     await send('Input.dispatchKeyEvent', {type:'keyUp', ...key});
     console.log('entered');
+    return;
+  }
+  if (command === 'monitor') {
+    await send('Log.enable');
+    await send('Network.enable');
+    await new Promise(resolve => setTimeout(resolve,Number(process.argv[3] || 20) * 1000));
+    console.log(JSON.stringify(events,null,2));
     return;
   }
   const expression = command === 'eval'
