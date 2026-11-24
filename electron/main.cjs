@@ -1,3 +1,4 @@
+require('./process-pipe-guard.cjs').guardProcessPipes(process);
 const { app, BrowserWindow, dialog, ipcMain, shell, protocol, net } = require("electron");
 const path = require("node:path");
 const {createHash}=require('node:crypto');
