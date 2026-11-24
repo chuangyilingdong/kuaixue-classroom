@@ -42,7 +42,8 @@ export function createRuntimeBroker({filename, checkAccess, openWorkspace, now=D
       // The location comes from a course-scoped host, never from the learner's request.
       const workspace = await openWorkspace(context);
       if (typeof workspace?.path !== 'string' || !workspace.path) throw Error('工作区未准备好');
-      return {runId,workspacePath:workspace.path,workspaceIdentity:workspace.identity,presets:workspace.presets ?? [],
+      return {runId,workspacePath:workspace.path,workspaceIdentity:workspace.identity,
+        presets:workspace.presets ?? [],modelLabels:workspace.modelLabels ?? {},
         socketId:issue('socket',context,30000),previewToken:issue('preview',context,8*60*60*1000)};
     },
     async claimSocket(id) {

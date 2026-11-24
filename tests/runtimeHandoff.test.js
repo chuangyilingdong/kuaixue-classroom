@@ -24,7 +24,8 @@ test('main-site course open signs a ticket redeemable by a separate runtime conn
   const platform = openTicketedCoursePlatform(openPlatform, courseFile, {}, ticketFile);
   const runtime = createRuntimeBroker({
     filename: ticketFile, checkAccess: platform.hasRuntimeAccess,
-    openWorkspace: () => ({path:'/course/project', presets:[]}),
+    openWorkspace: () => ({path:'/course/project', identity:'course-run',
+      presets:[],modelLabels:{'model-a':'课程模型 A'}}),
   });
   const server = createApiServer({platform, identity: userId => ({userId}), allowedOrigins:['kuaixue://classroom']});
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -55,6 +56,8 @@ test('main-site course open signs a ticket redeemable by a separate runtime conn
   const exchanged = await runtime.exchange(launch);
   assert.equal(exchanged.runId, launch.runId);
   assert.equal(exchanged.workspacePath, '/course/project');
+  assert.equal(exchanged.workspaceIdentity, 'course-run');
+  assert.deepEqual(exchanged.modelLabels, {'model-a':'课程模型 A'});
   assert.match(exchanged.previewToken,/^[a-zA-Z0-9_-]{43}$/);
   assert.deepEqual(await runtime.claimPreview(exchanged.previewToken), {...version, userId:'buyer', runId:launch.runId, mode:'VIBECODING'});
   assert.deepEqual(await runtime.claimPreview(exchanged.previewToken), {...version, userId:'buyer', runId:launch.runId, mode:'VIBECODING'});

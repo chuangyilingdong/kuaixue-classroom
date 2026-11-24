@@ -7,9 +7,12 @@ const root=resolve(process.argv[2]);
 const installed=resolve(process.argv[3]||'E:/灵动code/@zcodedesktop/resources/glm');
 const cliSource=resolve(process.argv[4]||join(root,'apps/zcode-cli/packages/cli/dist/zcode.cjs'));
 const runtime=resolve(process.argv.includes('--candidate')?'release/vibe-local-runtime-candidate':'release/vibe-local-runtime');
+const runtimeOnly=process.argv.includes('--runtime-only');
 const require=createRequire(join(root,'packages/server/package.json'));
 const {build}=require('esbuild');
 await mkdir(runtime,{recursive:true});
+await mkdir(join(runtime,'node'),{recursive:true});
+await copyFile(process.execPath,join(runtime,'node','node.exe'));
 const options={bundle:true,platform:'node',target:'node22',logLevel:'warning',minify:false,legalComments:'eof',plugins:[{name:'course-local-only',setup(b){
   b.onResolve({filter:/^(ssh2|node-pty|@lydell\/.*)$/}, args=>({path:args.path,namespace:'local-only'}));
   b.onLoad({filter:/.*/,namespace:'local-only'},()=>({contents:`export function spawn(){throw Error('课程演示未启用终端或远程连接')} export class Client {connect(){spawn()}} export default {Client,spawn};`}));
@@ -21,6 +24,20 @@ options.plugins.unshift({name:'upstream-compatibility',setup(builder){
       (match,lineBreak,indent)=>`"shared_context",${lineBreak}${indent}"agent_listing_delta",${lineBreak}${indent}]);`);
     source=source.replace(/"shared_context",?(\r?\n)(\s*)\]( as const;)?/g,
       (match,lineBreak,indent,suffix)=>`"shared_context",${lineBreak}${indent}"agent_listing_delta",${lineBreak}${indent}]${suffix||''}`);
+    return {contents:source,loader:'ts'};
+  });
+  builder.onLoad({filter:/zcodeAgentProcessManager\.ts$/},async args=>{
+    let source=await import('node:fs/promises').then(fs=>fs.readFile(args.path,'utf8'));
+    const pattern=/const windowsRuntime\s*=\s*process\.platform === "win32"\s*\?\s*await spawnWindowsRuntimeHost\(\{[\s\S]*?\}\)\s*:\s*undefined;/;
+    if(!pattern.test(source))throw Error('ZCode Windows runtime host wiring changed; update the course adapter');
+    source=source.replace(pattern,'const windowsRuntime = undefined;');
+    return {contents:source,loader:'ts'};
+  });
+  builder.onLoad({filter:/zcodeStdioTransport\.ts$/},async args=>{
+    let source=await import('node:fs/promises').then(fs=>fs.readFile(args.path,'utf8'));
+    const marker=/if \(process\.platform === "win32"\)\r?\n\s*throw new Error\("Windows CLI cleanup requires a runtime Job owner"\);/;
+    if(!marker.test(source))throw Error('ZCode Windows stdio cleanup changed; update the course adapter');
+    source=source.replace(marker,'// The course runtime owns a private agent and uses the process-tree fallback below.');
     return {contents:source,loader:'ts'};
   });
 }});
@@ -40,27 +57,29 @@ await build({...options,entryPoints:[require.resolve('ws')],format:'cjs',outfile
 await copyFile(join(root,'THIRD-PARTY-NOTICES.md'),join(runtime,'THIRD-PARTY-NOTICES.md'));
 await copyFile(join(root,'LICENSE'),join(runtime,'LICENSE'));
 
-await rm(join(runtime,'packages'),{recursive:true,force:true});
-await rm(join(runtime,'provider'),{recursive:true,force:true});
-await rm(join(runtime,'node_modules'),{recursive:true,force:true});
-await cp(join(installed,'packages'),join(runtime,'packages'),{recursive:true,dereference:true});
-await copyFile(cliSource,join(runtime,'zcode.cjs'));
-await mkdir(join(runtime,'provider'),{recursive:true});
-await copyFile(join(root,'config/provider/zcode-builtin.json'),join(runtime,'provider','zcode-builtin.json'));
-const localPlaywright=resolve('release/vibe-server/asar-extract/node_modules/playwright-core');
-let playwrightSource=localPlaywright,temporary;
-try {await access(join(localPlaywright,'package.json'));}
-catch {
-  temporary=await mkdtemp(join(tmpdir(),'kx-local-asar-'));
-  await extractAll(resolve(installed,'../app.asar'),temporary);
-  playwrightSource=join(temporary,'node_modules/playwright-core');
+if(!runtimeOnly){
+  await rm(join(runtime,'packages'),{recursive:true,force:true});
+  await rm(join(runtime,'provider'),{recursive:true,force:true});
+  await rm(join(runtime,'node_modules'),{recursive:true,force:true});
+  await cp(join(installed,'packages'),join(runtime,'packages'),{recursive:true,dereference:true});
+  await copyFile(cliSource,join(runtime,'zcode.cjs'));
+  await mkdir(join(runtime,'provider'),{recursive:true});
+  await copyFile(join(root,'config/provider/zcode-builtin.json'),join(runtime,'provider','zcode-builtin.json'));
+  const localPlaywright=resolve('release/vibe-server/asar-extract/node_modules/playwright-core');
+  let playwrightSource=localPlaywright,temporary;
+  try {await access(join(localPlaywright,'package.json'));}
+  catch {
+    temporary=await mkdtemp(join(tmpdir(),'kx-local-asar-'));
+    await extractAll(resolve(installed,'../app.asar'),temporary);
+    playwrightSource=join(temporary,'node_modules','playwright-core');
+  }
+  await mkdir(join(runtime,'node_modules'),{recursive:true});
+  await cp(playwrightSource,join(runtime,'node_modules','playwright-core'),{recursive:true,dereference:true});
+  const keyringRoot=join(root,'node_modules','@napi-rs');
+  await cp(join(keyringRoot,'keyring'),join(runtime,'node_modules','@napi-rs','keyring'),{recursive:true,dereference:true});
+  for(const name of await readdir(keyringRoot)){
+    if(!name.startsWith('keyring-'))continue;
+    await cp(join(keyringRoot,name),join(runtime,'node_modules','@napi-rs',name),{recursive:true,dereference:true});
+  }
+  if(temporary) await rm(temporary,{recursive:true,force:true});
 }
-await mkdir(join(runtime,'node_modules'),{recursive:true});
-await cp(playwrightSource,join(runtime,'node_modules','playwright-core'),{recursive:true,dereference:true});
-const keyringRoot=join(root,'node_modules','@napi-rs');
-await cp(join(keyringRoot,'keyring'),join(runtime,'node_modules','@napi-rs','keyring'),{recursive:true,dereference:true});
-for(const name of await readdir(keyringRoot)){
-  if(!name.startsWith('keyring-'))continue;
-  await cp(join(keyringRoot,name),join(runtime,'node_modules','@napi-rs',name),{recursive:true,dereference:true});
-}
-if(temporary) await rm(temporary,{recursive:true,force:true});

@@ -76,7 +76,7 @@ test('MiniMax-H3 使用正式模型键报价并把自动画幅发送为 adaptive
     modality:'VIDEO',input:{prompt:'猴子跳起来',params:{aspectRatio:'auto',resolution:'768P',durationSeconds:5}},
   });
   assert.equal(quote.points,4);
-  assert.equal(quote.executionModelKey,'rh-minimax-h3-multi');
+  assert.equal(quote.executionModelKey,'minimax/hailuo-h3/multimodal-to-video');
   assert.equal(quoteFacts.modelKey,'minimax/hailuo-h3/multimodal-to-video');
   assert.equal(quoteFacts.aspectRatio,'adaptive');
   assert.equal(quoteFacts.durationSeconds,5);
@@ -85,13 +85,13 @@ test('MiniMax-H3 使用正式模型键报价并把自动画幅发送为 adaptive
     modelLabel:'minimax/hailuo-h3/multimodal-to-video',
     modality:'VIDEO',
   });
-  assert.equal(displayNameCannotRoute.execution,'rh-minimax-h3-multi');
+  assert.equal(displayNameCannotRoute.execution,'minimax/hailuo-h3/multimodal-to-video');
   assert.equal(displayNameCannotRoute.billingKey,'minimax/hailuo-h3/multimodal-to-video');
 });
 
 test('全模态渠道模型都拆分为执行键和正式计费键',()=>{
   assert.ok(Object.keys(canvasBillingAliases).length>=52);
-  assert.equal(Object.keys(canvasExecutionAliases).length,10);
+  assert.equal(Object.keys(canvasExecutionAliases).length,11);
   for(const [model,billingKey] of Object.entries(canvasBillingAliases)){
     const route=canvasModelRoute({modelId:`aicyld-runninghub::${model}`,modelLabel:'自定义名称',modality:'IMAGE'});
     assert.equal(route.execution,canvasExecutionAliases[model]||model);
@@ -148,7 +148,7 @@ test('MiniMax-H3 上传课程素材到 RunningHub，且执行体不发送 genera
     if(href.endsWith('/openapi/v2/media/upload/binary')){
       return Response.json({code:0,data:{download_url:'https://rh.example/uploaded-course-asset.png'}});
     }
-    if(href.endsWith('/openapi/v2/rh-minimax-h3-multi'))return Response.json({code:0,data:{taskId:'task-video',status:'QUEUED'}});
+    if(href.endsWith('/openapi/v2/minimax/hailuo-h3/multimodal-to-video'))return Response.json({code:0,data:{taskId:'task-video',status:'QUEUED'}});
     if(href.endsWith('/openapi/v2/query'))return Response.json({code:0,data:{taskId:'task-video',status:'SUCCESS',
       results:[{videoUrl:'https://cdn.example/video.mp4'}]}});
     if(href.endsWith('/internal/canvas-billing/settle'))return Response.json({status:'succeeded'});
@@ -171,7 +171,7 @@ test('MiniMax-H3 上传课程素材到 RunningHub，且执行体不发送 genera
   const quote=await adapter.quoteGeneration(job);
   assert.equal(quote.points,42);
   await adapter.generateOrLookup(job);
-  const execute=calls.find(call=>call.href.endsWith('/openapi/v2/rh-minimax-h3-multi'));
+  const execute=calls.find(call=>call.href.endsWith('/openapi/v2/minimax/hailuo-h3/multimodal-to-video'));
   assert.deepEqual(execute.body.imageUrls.slice(0,1),['https://cdn.example/reference.png']);
   assert.deepEqual(execute.body.imageUrls.slice(1),['https://rh.example/uploaded-course-asset.png']);
   assert.equal(execute.body.ratio,'16:9');
@@ -212,5 +212,5 @@ test('课程素材无法镜像时中止 H3、释放预扣且不提交生成任�
       referenceAssets:[{type:'IMAGE',url:'https://aicyld.com.cn/api/v1/course-assets/11111111-2222-3333-4444-555555555555'}]},
   }),/读取课程素材失败/);
   assert.ok(calls.some(href=>href.endsWith('/internal/canvas-billing/release')));
-  assert.ok(!calls.some(href=>href.endsWith('/rh-minimax-h3-multi')));
+  assert.ok(!calls.some(href=>href.includes('/openapi/v2/minimax/hailuo-h3/multimodal-to-video')));
 });

@@ -31,6 +31,15 @@ async function loadCourseSource(id) {
     if (next === source) throw Error('灵动打开工作区入口变化，请核对课程适配');
     return next;
   }
+  if (resolve(id) === resolve(root,'../ui/src/lib/modelSelectionGroups.ts')) {
+    const source = await readFile(id, 'utf8');
+    const marker = 'name: modelId,';
+    if (!source.includes(marker)) throw Error('ZCode 模型选择显示名结构变化，请核对课程适配');
+    return source.replace(
+      marker,
+      'name: (globalThis as typeof globalThis & { __kuaixueModelLabel?: (modelId: string) => string | undefined }).__kuaixueModelLabel?.(modelId) ?? modelId,',
+    );
+  }
   // In the course edition entitlement is supplied by the course gateway. A model is
   // optional for editing, so the upstream provider setup dialog must not block the editor.
   if (resolve(id) === resolve(root,'../ui/src/Root.tsx')) {

@@ -18,14 +18,15 @@ billingKey  = providerModelKey
 
 ```text
 模型：MiniMax-H3 多模态参考生视频
-执行键：rh-minimax-h3-multi
+渠道别名：rh-minimax-h3-multi
+执行路径：minimax/hailuo-h3/multimodal-to-video
 计费键：minimax/hailuo-h3/multimodal-to-video
 ```
 
 如果执行接口错误地使用：
 
 ```text
-https://www.runninghub.cn/openapi/v2/minimax/hailuo-h3/multimodal-to-video
+https://www.runninghub.cn/openapi/v2/rh-minimax-h3-multi
 ```
 
 RunningHub 不会返回标准异步任务 `data.taskId`，客户端最终表现为：
@@ -37,7 +38,7 @@ RunningHub 未返回 taskId
 正确调用：
 
 ```text
-POST https://www.runninghub.cn/openapi/v2/rh-minimax-h3-multi
+POST https://www.runninghub.cn/openapi/v2/minimax/hailuo-h3/multimodal-to-video
 ```
 
 ## 三类路由
@@ -194,7 +195,7 @@ tests/canvasGeneration.test.js
 | `rh-seedance-2.0-fast-i2v` | `rhart-video/sparkvideo-2.0-fast/image-to-video` |
 | `rh-seedance-2.0-mini-multi` | `rhart-video/sparkvideo-2.0-mini/multimodal-video` |
 | `rh-seedance-2.0-mini-i2v` | `rhart-video/sparkvideo-2.0-mini/image-to-video` |
-| `rh-minimax-h3-multi` | `minimax/hailuo-h3/multimodal-to-video` |
+| 渠道别名 `rh-minimax-h3-multi` → 调用路径 `minimax/hailuo-h3/multimodal-to-video` | `minimax/hailuo-h3/multimodal-to-video` |
 | `rh-minimax-h3-i2v` | `minimax/hailuo-h3/image-to-video` |
 | `rh-kling-4-omni` | `kling-v4/omni-video` |
 | `rh-kling-4-i2v` | `kling-v4/image-to-video` |
@@ -396,7 +397,7 @@ Seedance 2.5 的图生视频必须使用：
 执行：
 
 ```http
-POST https://www.runninghub.cn/openapi/v2/rh-minimax-h3-multi
+POST https://www.runninghub.cn/openapi/v2/minimax/hailuo-h3/multimodal-to-video
 Authorization: Bearer <RUNNINGHUB_API_KEY>
 Content-Type: application/json
 ```
@@ -447,9 +448,13 @@ title
 0120 发布后三次 H3 任务都未创建上游任务，预扣均为 42 且已全额退回。已成功
 跑过的 H3 备用通道使用的是 `prompt / ratio / resolution / duration / imageUrls`，
 不发送 `generateAudio`；本次新适配器却持续发送 `generateAudio: false`。
-同时站内参考图此前只做了签名，没有镜像到 RunningHub。当前实现已按上述两条
+同时站内参考图此前只做了签名，没有镜像到 RunningHub。当前实现已按上述三条
 修正，并把 `errorCode / errorMessage / failedReason / status` 纳入服务日志与
 用户可见失败原因。仍需账号本人发起一次真实生成确认 `taskId`、结算和作品下载。
+
+新任务 `c13cc119-d85f-48e8-b40f-748577f9a0ce` 进一步确认：
+`POST /openapi/v2/rh-minimax-h3-multi` 返回 `1001 Invalid URL`。H3 的调用路径必须
+使用 `minimax/hailuo-h3/multimodal-to-video`，而计费键保持不变。
 
 期望响应：
 
@@ -485,8 +490,9 @@ title
 ## 验收用例
 
 1. H3 报价请求中的 `modelKey` 是 provider key，不是 `rh-minimax-h3-multi`。
-2. H3 执行 HTTP 路径包含 `rh-minimax-h3-multi`，不包含
-   `minimax/hailuo-h3/multimodal-to-video`。
+2. H3 执行 HTTP 路径必须是
+   `minimax/hailuo-h3/multimodal-to-video`，不能是渠道别名
+   `rh-minimax-h3-multi`。
 3. 执行响应必须取得 `data.taskId` 后才进入 query 轮询。
 4. query 使用同一站点和同一组 RunningHub API Key。
 5. 任务成功后结算使用预扣 `holdId`，不修改执行模型键。

@@ -12,7 +12,10 @@ export function createScopedSocketAcceptor({WebSocketServer, WebSocket, resolveH
     url.pathname = '/ws';
     const upstream = new WebSocket(url,{...(connectHost ? {createConnection:() => connectHost(target)} : {}),headers:{Cookie:`zcode_lite_token=${encodeURIComponent(target.token)}`},handshakeTimeout:8000,maxPayload:4_000_000});
     socket.once('close',() => upstream.terminate());
-    upstream.once('error',() => socket.destroy());
+    upstream.once('error',error => {
+      console.error('[kuaixue-runtime] upstream websocket error',error?.message||error);
+      socket.destroy();
+    });
     upstream.once('open',() => {
       if (socket.destroyed) return upstream.terminate();
       try {listener.handleUpgrade(req,socket,head,client => {
@@ -29,7 +32,11 @@ export function createScopedSocketAcceptor({WebSocketServer, WebSocket, resolveH
             if (to.readyState !== WebSocket.OPEN || to.bufferedAmount > 8_000_000) return stop();
             to.send(data,{binary},error => {if (error) stop();});
           });
-          from.on('close',stop); from.on('error',stop);
+          from.on('close',code => {
+            if(from===upstream) console.error('[kuaixue-runtime] upstream websocket closed',{code});
+            stop();
+          });
+          from.on('error',stop);
         }
       });} catch {socket.destroy();upstream.terminate();}
     });

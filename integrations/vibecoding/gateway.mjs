@@ -53,8 +53,8 @@ function hostKey(context) {
   return createHash('sha256').update(JSON.stringify([context.userId, context.courseId, context.versionId])).digest('hex');
 }
 
-export async function servePreview({hostRoot,context,pathname,publicPath,req,res}) {
-  const root = join(hostRoot,hostKey(context),'workspace');
+export async function servePreview({hostRoot,context,pathname,publicPath,req,res,workspaceRoot}) {
+  const root = workspaceRoot || join(hostRoot,hostKey(context),'workspace');
   let parts;
   try {
     parts = pathname.split('/').filter(Boolean).map(part=>decodeURIComponent(part));
@@ -147,7 +147,9 @@ export function createGateway({courseFile, ticketFile, hostRoot, WebSocket}) {
   const broker = createRuntimeBroker({filename:ticketFile, checkAccess, openWorkspace(context) {
     const plan = course(context);
     if (!plan) throw Error('课程权益已撤销');
-    return {path:hostFor(context).path, identity:context.runId, presets:plan.classroomConfig?.vibeCoding?.presetPrompts ?? []};
+    return {path:hostFor(context).path, identity:context.runId,
+      presets:plan.classroomConfig?.vibeCoding?.presetPrompts ?? [],
+      modelLabels:plan.vibeModelLabels ?? {}};
   }});
   const accept = createScopedSocketAcceptor({WebSocketServer:WebSocket.WebSocketServer, WebSocket, resolveHost:hostFor, connectHost, checkAccess});
   const server = createServer({requestTimeout:10000, headersTimeout:10000}, async (req,res) => {

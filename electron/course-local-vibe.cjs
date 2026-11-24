@@ -25,6 +25,17 @@ function hostKey(context) {
   return createHash('sha256').update(JSON.stringify([context.userId,context.courseId,context.versionId])).digest('hex');
 }
 
+function courseWorkspaceName(title, context) {
+  const fallback='课程工程';
+  const safe=String(title||fallback)
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g,'_')
+    .replace(/[. ]+$/g,'')
+    .replace(/\s+/g,' ')
+    .trim()
+    .slice(0,48)||fallback;
+  return `${safe}-${hostKey(context).slice(0,8)}`;
+}
+
 async function ready(origin,token,child) {
   for(let attempt=0;attempt<120;attempt++) {
     if(child.exitCode!==null||child.signalCode) throw Error('本机 VibeCoding 服务已退出');
@@ -74,8 +85,12 @@ async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
   const WebSocket=require(path.join(runtimeDir,'socket.cjs'));
   const dataDirectory=await fsp.realpath(dataRoot);
   const hostRoot=path.join(dataDirectory,'vibe-projects');
-  const workspace=path.join(hostRoot,hostKey(context),'workspace');
+  const workspace=path.join(hostRoot,courseWorkspaceName(run.course.title,context));
+  const legacyWorkspace=path.join(hostRoot,hostKey(context),'workspace');
   await fsp.mkdir(workspace,{recursive:true});
+  if(workspace!==legacyWorkspace&&!fs.existsSync(path.join(workspace,'index.html'))&&fs.existsSync(legacyWorkspace)) {
+    await fsp.cp(legacyWorkspace,workspace,{recursive:true,force:false,errorOnExist:false});
+  }
   try {await fsp.writeFile(path.join(workspace,'index.html'),run.work||starter,{flag:'wx'});}
   catch(error){if(error.code!=='EEXIST')throw error;}
 
@@ -88,7 +103,9 @@ async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
   const checkAccess=candidate=>candidate.runId===context.runId&&candidate.userId===context.userId&&
     candidate.versionId===context.versionId&&candidate.courseId===context.courseId&&candidate.mode==='VIBECODING';
   const broker=createRuntimeBroker({filename:':memory:',checkAccess,openWorkspace:async()=>({
-    path:workspace,presets:run.course.classroomConfig?.vibeCoding?.presetPrompts||[],
+    path:workspace,
+    presets:run.course.classroomConfig?.vibeCoding?.presetPrompts||[],
+    modelLabels:run.course.vibeModelLabels||{},
   })});
 
   async function discardProfile() {
@@ -133,7 +150,8 @@ async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
           try {
             const claimed=await broker.claimPreview(preview[1]);
             return await servePreview({hostRoot,context:claimed,pathname:preview[2]||'/',
-              publicPath:`/kuaixue/runtime/preview/${preview[1]}${preview[2]||'/'}`,req,res});
+              publicPath:`/kuaixue/runtime/preview/${preview[1]}${preview[2]||'/'}`,req,res,
+              workspaceRoot:workspace});
           } catch {res.writeHead(403);return res.end();}
         }
         const prefix='/kuaixue/workbench/';
@@ -162,21 +180,29 @@ async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
     });
     const browser=findBrowser();
     const agentArgs=[path.join(runtimeDir,'zcode.cjs'),'app-server','--stdio'];
+    const bundledAgentNode=path.join(runtimeDir,'node','node.exe');
+    const agentNode=(process.env.KUAIXUE_AGENT_NODE_EXECUTABLE||'').trim()
+      ||(fs.existsSync(bundledAgentNode)?bundledAgentNode:process.execPath);
     const providerConfig=path.join(runtimeDir,'provider','zcode-builtin.json');
+    const runtimeHost=path.join(runtimeDir,'tools','runtime-host','zcode-runtime-host.exe');
     const childEnv=withRuntimeTools({
       ...process.env,
       ZCODE_DATA_BASE_DIR:profile,ZCODE_DESKTOP_HOME_DIR:profile,ZCODE_HOME:path.join(profile,'.zcode'),
-      ZCODE_AGENT_SERVER_COMMAND:process.execPath,ZCODE_AGENT_SERVER_ARGS_JSON:JSON.stringify(agentArgs),
+      ZCODE_AGENT_SERVER_COMMAND:agentNode,ZCODE_AGENT_SERVER_ARGS_JSON:JSON.stringify(agentArgs),
       KUAIXUE_BROWSER_EXECUTABLE:browser||'',
       ZCODE_BUILTIN_PROVIDER_CONFIG_FILE:providerConfig,
       ZCODE_PERSONAL_PROVIDER_CONFIG_FILE:path.join(profile,'.zcode','v2','provider_config.json'),
+      ...(fs.existsSync(runtimeHost)?{ZCODE_RUNTIME_HOST_PATH:runtimeHost,ZCODE_SERVER_RUNTIME_ROOT:runtimeDir}:{}),
       ELECTRON_RUN_AS_NODE:'1',ZCODE_SERVER_AUTH_TOKEN:token,PORT:String(runtimePort),
     },resourceRoot);
     child=spawn(process.execPath,[path.join(runtimeDir,'course-runtime.mjs')],{
-      cwd:workspace,env:childEnv,stdio:process.env.KUAIXUE_QA_RUNTIME==='1'?['ignore','ignore','inherit']:'ignore',windowsHide:true,
+      cwd:workspace,env:childEnv,stdio:process.env.KUAIXUE_QA_RUNTIME==='1'?['ignore','inherit','inherit']:'ignore',windowsHide:true,
     });
-    child.once('error',close);
-    child.once('close',()=>{close();void discardProfile();});
+    child.once('error',error=>{console.error('[course-vibe] runtime spawn failed',error);close();});
+    child.once('close',(code,signal)=>{
+      console.error('[course-vibe] runtime exited',{code,signal});
+      close();void discardProfile();
+    });
     await ready(hostOrigin,token,child);
     const accept=createScopedSocketAcceptor({WebSocketServer:WebSocket.WebSocketServer,WebSocket,checkAccess,
       resolveHost:async()=>({...context,token,origin:hostOrigin.replace('http:','ws:')})});
@@ -185,7 +211,7 @@ async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
         if(req.headers.origin!==origin||!req.url.startsWith('/kuaixue/runtime/ws/'))throw Error();
         const claimed=await broker.claimSocket(req.url.slice('/kuaixue/runtime/ws/'.length));
         await accept({req,socket,head,context:claimed});
-      }catch{socket.destroy();}
+      }catch(error){console.error('[course-vibe] websocket upgrade failed',error);socket.destroy();}
     });
     const ticket=await broker.issueRuntimeTicket(context);
     function readHtml() {

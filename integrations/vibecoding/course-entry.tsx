@@ -210,16 +210,34 @@ async function enterCourse() {
       !/^[a-zA-Z0-9_-]{43}$/.test(runtime.previewToken))) throw Error();
   const protocol = location.protocol === 'https:' ? 'wss' : location.hostname === '127.0.0.1' ? 'ws' : null;
   if (!protocol) throw Error();
+  const modelLabels = Object.fromEntries(Object.entries(runtime.modelLabels ?? {})
+    .filter(([id,label]) => typeof id === 'string' && id && typeof label === 'string' && label.trim())
+    .map(([id,label]) => [id,label.trim()]));
+  (globalThis as typeof globalThis & {
+    __kuaixueModelLabel?: (modelId: string) => string | undefined;
+  }).__kuaixueModelLabel = modelId => modelLabels[modelId];
   const services = await connectViaWebSocket(`${protocol}://${location.host}/kuaixue/runtime/ws/${runtime.socketId}`, {
     onClose: () => root.render(<p role="alert">创作连接已断开，请返回课程后重新进入。</p>),
   });
+  let initialProjectId: string | undefined;
+  try {
+    const project = await services.projectService?.saveProject({
+      roots: [runtime.workspacePath],
+      reuseExistingRoot: true,
+    });
+    if (project?.id) initialProjectId = project.id;
+  } catch (error) {
+    console.warn('[kuaixue-course] 课程项目登记失败，继续打开工程目录', error);
+  }
   const registry = await services.modelSelectionService.getView();
   const modelsReady = registry.providers.some(provider => provider.providerId === 'lingdong-platform-gateway' && provider.models.length);
   setStreamClientId(generateMobileDeviceFingerprint());
   root.render(<AppErrorBoundary><ZCodeIntlProvider settingService={services.settingService} broadcastService={services.broadcastService}>
     {!modelsReady && <div role="status" style={{position:'fixed',top:0,right:12,zIndex:10,pointerEvents:'none'}}>课程工程可编辑 · AI 生成未开放</div>}
     <Root services={services} platform={createWebPlatform(runtime.presets ?? [], createCourseHtmlPreview(services.fileService, runtime.workspacePath, runtime.previewToken))} initialWorkspaceAbsPath={runtime.workspacePath}
-      initialWorkspaceIdentity={runtime.workspaceIdentity} restoreSession={false} allowOpenWorkspace
+      initialWorkspaceIdentity={runtime.workspaceIdentity} initialWorkspacePurpose="project"
+      initialTaskDraft={initialProjectId ? {projectId: initialProjectId} : undefined}
+      restoreSession={false} allowOpenWorkspace
       supportsSettings={false} preferDirectoryBrowser={false} supportsEmbeddedBrowser={false} allowRemoteWorkspace={false} />
   </ZCodeIntlProvider></AppErrorBoundary>);
 }

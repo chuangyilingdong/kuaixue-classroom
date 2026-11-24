@@ -80,6 +80,7 @@ export const canvasBillingAliases=Object.freeze({
 });
 
 export const canvasExecutionAliases=Object.freeze({
+  'rh-minimax-h3-multi':'minimax/hailuo-h3/multimodal-to-video',
   'rh-gpt-image-2.6-sunburst-i2i':'rhart-image-g-2.6-official-token/sunburst/edit',
   'rh-gpt-image-2.6-flare-i2i':'rhart-image-g-2.6-official-token/flare/edit',
   'rh-gpt-image-2.6-sunburst-t2i':'rhart-image-g-2.6-official-token/sunburst/text-to-image',
