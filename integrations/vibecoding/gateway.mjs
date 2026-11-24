@@ -53,7 +53,7 @@ function hostKey(context) {
   return createHash('sha256').update(JSON.stringify([context.userId, context.courseId, context.versionId])).digest('hex');
 }
 
-export async function servePreview({hostRoot,context,pathname,publicPath,req,res,workspaceRoot}) {
+export async function servePreview({hostRoot,context,pathname,publicPath,req,res,workspaceRoot,frameAncestors=''}) {
   const root = workspaceRoot || join(hostRoot,hostKey(context),'workspace');
   let parts;
   try {
@@ -102,7 +102,7 @@ export async function servePreview({hostRoot,context,pathname,publicPath,req,res
       ...(range ? {'Content-Range':`bytes ${range.start}-${range.end}/${finalStat.size}`} : {}),
     };
     if (extension==='.html'||extension==='.htm') {
-      headers['Content-Security-Policy']="default-src 'self' data: blob: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; font-src 'self' data: https:; connect-src 'self' https:; object-src 'none'; frame-ancestors 'self'; base-uri 'self'";
+      headers['Content-Security-Policy']=`default-src 'self' data: blob: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; font-src 'self' data: https:; connect-src 'self' https:; object-src 'none'; frame-ancestors 'self' ${frameAncestors}; base-uri 'self'`;
     }
     res.writeHead(range ? 206 : 200,headers);
     if (req.method==='HEAD') return res.end();
@@ -157,7 +157,7 @@ export function createGateway({courseFile, ticketFile, hostRoot, WebSocket}) {
     if (previewMatch && ['GET','HEAD'].includes(req.method)) {
       try {
         const context = await broker.claimPreview(previewMatch[1]);
-        return await servePreview({hostRoot,context,pathname:previewMatch[2] || '/',publicPath:previewMatch[0],req,res});
+        return await servePreview({hostRoot,context,pathname:previewMatch[2] || '/',publicPath:previewMatch[0],req,res,frameAncestors:origin});
       } catch {
         res.writeHead(403);return res.end();
       }
