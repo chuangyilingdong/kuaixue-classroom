@@ -23,18 +23,20 @@ const allowedOrigins = ['kuaixue://classroom', publicOrigin];
 const consentPage = fs.readFileSync(path.join(root, 'consent.html'), 'utf8');
 
 async function main() {
-  const [{ openCoursePlatform }, { createApiServer }, { createAccountReader }, { openTicketedCoursePlatform }, { mainSiteRuntimeFromEnv }, { canvasGenerationFromEnv }] = await Promise.all([
+  const [{ openCoursePlatform }, { createApiServer }, { createAccountReader }, { openTicketedCoursePlatform }, { mainSiteRuntimeFromEnv }, { canvasGenerationFromEnv }, { createMainSiteModelGateway }] = await Promise.all([
     import(pathToFileURL(path.join(root, 'apps/api/course-platform.mjs')).href),
     import(pathToFileURL(path.join(root, 'apps/api/server.mjs')).href),
     import(pathToFileURL(path.join(root, 'apps/api/account.mjs')).href),
     import(pathToFileURL(path.join(root, 'integrations/vibecoding/main-site-tickets.mjs')).href),
     import(pathToFileURL(path.join(root, 'apps/api/main-site-runtime.mjs')).href),
     import(pathToFileURL(path.join(root, 'apps/api/canvas-generation.mjs')).href),
+    import(pathToFileURL(path.join(root, 'apps/api/main-site-model-gateway.mjs')).href),
   ]);
   const provider = openFormalProvider(process.env.KUAIXUE_AUTH_DB || dbPath);
   const {withCourseModels} = await import('./course-models.mjs');
   const runtime = mainSiteRuntimeFromEnv();
   const generation = canvasGenerationFromEnv();
+  const modelGateway = createMainSiteModelGateway();
   const runtimeProvider = {
     ...provider,
     ...(provider.issueLocalModelGrant ? {} : { issueLocalModelGrant: runtime?.issueLocalModelGrant }),
@@ -44,7 +46,7 @@ async function main() {
     ...(provider.generateOrLookup ? {} : { generateOrLookup: generation?.generateOrLookup }),
     assetRoot: process.env.KUAIXUE_ASSET_ROOT,
   };
-  const platform = withCourseModels(openTicketedCoursePlatform(openCoursePlatform, dbPath, runtimeProvider, process.env.KUAIXUE_RUNTIME_TICKET_DB), provider.identity);
+  const platform = withCourseModels(openTicketedCoursePlatform(openCoursePlatform, dbPath, runtimeProvider, process.env.KUAIXUE_RUNTIME_TICKET_DB), provider.identity, {modelGateway});
   const accountReader = createAccountReader({
     identity: provider.identity,
     listGrants: platform.listGrants,

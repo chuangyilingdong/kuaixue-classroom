@@ -9,6 +9,7 @@ export const courseServiceFiles = [
   'apps/api/course-platform.mjs',
   'apps/api/generation-binding.mjs',
   'apps/api/main-site-runtime.mjs',
+  'apps/api/main-site-model-gateway.mjs',
   'apps/api/server.mjs',
   'data/course-catalog.demo.json',
   'electron/course-version.cjs',

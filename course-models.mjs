@@ -3,6 +3,7 @@ import {once} from 'node:events';
 import {createHash,randomBytes} from 'node:crypto';
 import {mkdir,chmod,unlink} from 'node:fs/promises';
 import {join} from 'node:path';
+import {Readable} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 
 function json(res,status,data) {res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(data));}
@@ -17,7 +18,8 @@ function call(socketPath,path,data,headers={}) {
     request.setTimeout(190000,()=>request.destroy(Error('timeout')));request.on('error',reject);request.end(data && JSON.stringify(data));
   });
 }
-export function withCourseModels(platform,identity,{root='/var/lib/kx-models',backend='/run/kx-chat/bridge.sock'}={}) {
+export function withCourseModels(platform,identity,{root='/var/lib/kx-models',backend='/run/kx-chat/bridge.sock',modelGateway}={}) {
+  if(!modelGateway?.chat) throw Error('主站模型网关未配置');
   const hosts=new Map();
   async function models(grant) {
     const response=await call(backend,'/models');
@@ -41,9 +43,16 @@ export function withCourseModels(platform,identity,{root='/var/lib/kx-models',ba
       if(req.method!=='POST' || req.url!=='/v1/chat/completions') return json(res,404,{});
       const message=await jsonBody(req);const model=listing.find(m=>m.id.split('::')[1]===message?.model);
       if(!model || entry.grant!==g || !current(g)) return json(res,403,{error:{message:'课程未授权此模型'}});
-      const remote=await call(backend,'/chat',{...message,model:model.id},{'x-course-user':g.userId,'x-course-run':g.runId});
-      res.writeHead(remote.statusCode,{'content-type':remote.headers['content-type']||'application/json','cache-control':'no-store'});
-      await pipeline(remote,res);
+      const remote=await modelGateway.chat(g,{...message,model:model.id});
+      const headers={'content-type':remote.headers.get('content-type')||'application/json','cache-control':'no-store'};
+      for(const name of ['x-kuaixue-usage-limit','x-kuaixue-usage-used','x-kuaixue-usage-remaining']) {
+        const value=remote.headers.get(name);
+        if(value) headers[name]=value;
+      }
+      headers['access-control-expose-headers']='X-Kuaixue-Usage-Limit, X-Kuaixue-Usage-Used, X-Kuaixue-Usage-Remaining';
+      res.writeHead(remote.status,headers);
+      if(remote.body) await pipeline(Readable.fromWeb(remote.body),res);
+      else res.end();
     }catch{if(!res.headersSent) json(res,503,{error:{message:'课程模型服务暂不可用'}});else res.destroy();}});
     server.listen(path);await once(server,'listening');await chmod(path,0o660);return server;
   }
