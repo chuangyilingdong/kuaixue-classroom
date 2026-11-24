@@ -50,55 +50,22 @@ export function previewUrlFor(workspacePath, token, url) {
 const htmlPreamble = `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; media-src data:; font-src data:; form-action 'none'; base-uri 'none'">`;
 
 export function createCourseHtmlPreview(fileService, workspacePath, previewToken) {
-  let activeDialog;
   return function openCourseHtmlPreview(url) {
     if (!/^file:.*\.html?(?:[?#].*)?$/i.test(url)) return false;
-    activeDialog?.close();
-    const dialog = document.createElement('dialog');
-    const heading = document.createElement('strong');
-    const header = document.createElement('header');
-    const close = document.createElement('button');
-    const status = document.createElement('p');
-    dialog.className = 'kx-html-preview';
-    dialog.setAttribute('aria-label', '作品预览');
-    heading.textContent = '作品预览';
-    close.textContent = '关闭预览';
-    close.type = 'button';
-    close.onclick = () => dialog.close();
-    header.append(heading, close);
-    status.setAttribute('role','status');
-    status.textContent = '正在读取课程作品…';
-    dialog.append(header, status);
-    dialog.addEventListener('close', () => {
-      dialog.remove();
-      if (activeDialog === dialog) activeDialog = undefined;
-    }, {once:true});
-    activeDialog = dialog;
-    document.body.append(dialog);
-    dialog.showModal();
-    const projectUrl = previewUrlFor(workspacePath, previewToken, url);
-    if (projectUrl) {
-      const frame = document.createElement('iframe');
-      frame.title = '课程 HTML 作品';
-      frame.setAttribute('sandbox','allow-scripts allow-forms allow-modals allow-downloads');
-      frame.referrerPolicy = 'no-referrer';
-      frame.src = projectUrl;
-      frame.addEventListener('load',()=>status.remove(),{once:true});
-      dialog.append(frame);
-      return true;
-    }
-    void readCourseHtml(fileService, workspacePath, url).then(html => {
-      if (!dialog.open) return;
-      const frame = document.createElement('iframe');
-      frame.title = '课程 HTML 作品';
-      frame.setAttribute('sandbox','allow-scripts');
-      frame.referrerPolicy = 'no-referrer';
-      frame.srcdoc = htmlPreamble + html;
-      status.replaceWith(frame);
-    }).catch(error => {
-      status.setAttribute('role', 'alert');
-      status.textContent = `作品预览失败。${error.message || '请重新打开文件。'}`;
-    });
+    const parsed = new URL(url);
+    const file = decodeURIComponent(parsed.pathname).replace(/^\/(?=[A-Za-z]:\/)/,'');
+    const selected=document.querySelector('[data-task-item-key].bg-selected');
+    const key=selected?.getAttribute('data-task-item-key')?.trim()||'';
+    const separator=key.lastIndexOf(':');
+    const directory=document.querySelector('[data-testid="workspace-path"][data-workspace-abs-path]')
+      ?.getAttribute('data-workspace-abs-path')?.trim() || (separator>1?key.slice(0,separator):'') || workspacePath;
+    if (!directory || !file) return false;
+    window.parent.postMessage({
+      type:'kuaixue-open-html-preview',
+      requestId:`html-${Date.now()}`,
+      directory,
+      file,
+    }, '*');
     return true;
   };
 }

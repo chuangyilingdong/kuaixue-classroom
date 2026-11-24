@@ -6,6 +6,7 @@ const fsp = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const {spawn} = require('node:child_process');
+const {DatabaseSync} = require('node:sqlite');
 const {findBrowser} = require('./local-capabilities.cjs');
 
 const loopback='127.0.0.1';
@@ -34,6 +35,43 @@ function courseWorkspaceName(title, context) {
     .trim()
     .slice(0,48)||fallback;
   return `${safe}-${hostKey(context).slice(0,8)}`;
+}
+
+function profileScore(directory) {
+  let score=0;
+  try {
+    const db=new DatabaseSync(path.join(directory,'.zcode','v2','tasks-index.sqlite'),{readOnly:true});
+    try {
+      const hasProjects=db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='table' AND name='projects'").get()?.n;
+      const projects=hasProjects?db.prepare('SELECT count(*) n FROM projects').get().n:0;
+      const hasTasks=db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='table' AND name='tasks'").get()?.n;
+      const tasks=hasTasks?db.prepare('SELECT count(*) n FROM tasks').get().n:0;
+      score=Number(projects||0)*100000+Number(tasks||0)*100;
+    } finally {db.close();}
+  } catch {}
+  return score;
+}
+
+async function prepareCourseProfile(profiles,runId,profile) {
+  const exists=await fsp.stat(profile).then(value=>value.isDirectory(),()=>false);
+  if(exists)return profile;
+  let candidates=[];
+  try {
+    candidates=(await fsp.readdir(profiles,{withFileTypes:true}))
+      .filter(entry=>entry.isDirectory()&&entry.name.startsWith(`${runId}-`))
+      .map(entry=>({path:path.join(profiles,entry.name),name:entry.name}));
+  } catch {}
+  const scored=await Promise.all(candidates.map(async candidate=>({
+    ...candidate,
+    score:profileScore(candidate.path),
+    mtime:(await fsp.stat(candidate.path).catch(()=>null))?.mtimeMs||0,
+  })));
+  scored.sort((a,b)=>b.score-a.score||b.mtime-a.mtime);
+  if(scored[0]) {
+    await fsp.cp(scored[0].path,profile,{recursive:true,force:false,errorOnExist:false}).catch(()=>{});
+  }
+  await fsp.mkdir(profile,{recursive:true,mode:0o700});
+  return profile;
 }
 
 async function ready(origin,token,child) {
@@ -96,6 +134,7 @@ async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
 
   const token=randomBytes(32).toString('base64url');
   let child,profile,closed=false,lease=randomBytes(16).toString('hex');
+  const previewRoots=new Map();
   const profiles=path.join(dataDirectory,'vibe-profiles');
   const web=createServer();
   const connections=new Set();
@@ -108,16 +147,13 @@ async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
     modelLabels:run.course.vibeModelLabels||{},
   })});
 
-  async function discardProfile() {
+  async function discardProviderCredential() {
     if(process.env.KUAIXUE_QA_KEEP_PROFILE==='1') {
       console.error('本机 VibeCoding 测试配置目录',profile);
       return;
     }
     if(!profile)return;
-    const actual=await fsp.realpath(profile).catch(()=>null);
-    if(actual&&path.dirname(actual)===profiles&&path.basename(actual).startsWith(`${run.id}-`)) {
-      await fsp.rm(actual,{recursive:true,force:true,maxRetries:5,retryDelay:150}).catch(()=>{});
-    }
+    await fsp.rm(path.join(profile,'.zcode','v2','provider_config.json'),{force:true}).catch(()=>{});
   }
   function close() {
     if(closed)return;
@@ -125,7 +161,8 @@ async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
     for(const socket of connections)socket.destroy();
     web.close();
     if(child&&child.exitCode===null&&!child.signalCode)child.kill();
-    else void discardProfile();
+    void discardProviderCredential();
+    previewRoots.clear();
     broker.close();
   }
 
@@ -149,9 +186,11 @@ async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
         if(preview&&['GET','HEAD'].includes(req.method)){
           try {
             const claimed=await broker.claimPreview(preview[1]);
+            const previewRoot=previewRoots.get(preview[1]);
+            if(!previewRoot)throw Error('预览授权无工程目录');
             return await servePreview({hostRoot,context:claimed,pathname:preview[2]||'/',
               publicPath:`/kuaixue/runtime/preview/${preview[1]}${preview[2]||'/'}`,req,res,
-              workspaceRoot:workspace,frameAncestors:`kuaixue://classroom ${origin}`});
+              workspaceRoot:previewRoot,frameAncestors:`kuaixue://classroom ${origin}`});
           } catch {res.writeHead(403);return res.end();}
         }
         const prefix='/kuaixue/workbench/';
@@ -171,8 +210,8 @@ async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
     const runtimePort=await listen(reserve);
     await new Promise(resolve=>reserve.close(resolve));
     const hostOrigin=`http://${loopback}:${runtimePort}`;
-    await fsp.mkdir(profiles,{recursive:true});
-    profile=await fsp.mkdtemp(path.join(profiles,`${run.id}-`));
+    await fsp.mkdir(profiles,{recursive:true,mode:0o700});
+    profile=await prepareCourseProfile(profiles,run.id,path.join(profiles,hostKey(context)));
     if(process.env.KUAIXUE_QA_RUNTIME==='1') console.error('本机 VibeCoding 配置目录',profile);
     await provisionCourseProvider({
       profile,context,
@@ -202,7 +241,7 @@ async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
     child.once('error',error=>{console.error('[course-vibe] runtime spawn failed',error);close();});
     child.once('close',(code,signal)=>{
       console.error('[course-vibe] runtime exited',{code,signal});
-      close();void discardProfile();
+      close();void discardProviderCredential();
     });
     await ready(hostOrigin,token,child);
     const accept=createScopedSocketAcceptor({WebSocketServer:WebSocket.WebSocketServer,WebSocket,checkAccess,
@@ -215,37 +254,68 @@ async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
       }catch(error){console.error('[course-vibe] websocket upgrade failed',error);socket.destroy();}
     });
     const ticket=await broker.issueRuntimeTicket(context);
-    function readHtml() {
-      const target=path.join(workspace,'index.html');
+    function htmlTarget(directory,file){
+      const root=path.resolve(directory||workspace);
+      const target=path.resolve(file||path.join(root,'index.html'));
+      const relative=path.relative(root,target);
+      if(!relative||relative.startsWith('..')||path.isAbsolute(relative)||!/\.html?$/i.test(target)) {
+        throw Error('请选择当前工程中的 HTML 文件');
+      }
+      return {root,target,relative};
+    }
+    function readHtml(directory) {
+      const {target}=htmlTarget(directory);
       const stat=fs.statSync(target);
       if(!stat.isFile()||stat.size>4_000_000) throw Error('请检查本机工程中的 index.html');
       return fs.readFileSync(target,'utf8');
     }
-    function snapshot() {
-      return {runId:run.id,directory:workspace,html:readHtml()};
+    function snapshot(directory) {
+      const root=path.resolve(directory||workspace);
+      return {runId:run.id,directory:root,html:readHtml(root)};
     }
-    async function preview(knownMtime=0) {
-      const target=path.join(workspace,'index.html');
+    async function authorizeWorkspace(directory) {
+      const target=path.resolve(directory);
+      try {
+        const db=new DatabaseSync(path.join(profile,'.zcode','v2','tasks-index.sqlite'),{readOnly:true});
+        try {
+          const roots=[
+            ...db.prepare('SELECT root_path path FROM project_roots').all(),
+            ...db.prepare('SELECT DISTINCT workspace_path path FROM tasks').all(),
+          ].map(row=>path.resolve(row.path)).filter(Boolean);
+          return roots.some(root=>{
+            const relative=path.relative(root,target);
+            return relative===''||(!relative.startsWith('..')&&!path.isAbsolute(relative));
+          });
+        } finally {db.close();}
+      } catch {return false;}
+    }
+    async function preview(directory,file,knownMtime=0) {
+      const {root,target,relative}=htmlTarget(directory,file);
       const stat=await fsp.stat(target);
       if(!stat.isFile()||stat.size>4_000_000) throw Error('请先生成有效的 index.html');
       if(Number.isFinite(knownMtime)&&knownMtime===stat.mtimeMs) {
-        return {runId:run.id,unchanged:true,mtimeMs:stat.mtimeMs,size:stat.size};
+        return {runId:run.id,unchanged:true,file:target,mtimeMs:stat.mtimeMs,size:stat.size};
       }
       const previewToken=await broker.issuePreview(context);
+      previewRoots.set(previewToken,root);
+      const encoded=relative.split(path.sep).map(encodeURIComponent).join('/');
       return {
         runId:run.id,
-        url:`${origin}/kuaixue/runtime/preview/${previewToken}/index.html`,
+        file:target,
+        url:`${origin}/kuaixue/runtime/preview/${previewToken}/${encoded}`,
         mtimeMs:stat.mtimeMs,
         size:stat.size,
         unchanged:false,
       };
     }
     return {
-      runId:run.id,runtime:'local',lease,directory:workspace,context,snapshot,preview,
-      frameUrl:`${origin}/kuaixue/workbench/#${new URLSearchParams({run:run.id,ticket})}`,
+      runId:run.id,runtime:'local',lease,directory:workspace,context,authorizeWorkspace,snapshot,preview,
+      frameUrl:`${origin}/kuaixue/workbench/#${new URLSearchParams({
+        run:run.id,ticket,usageLimit:String(gateway.usage.limit),usageUsed:String(gateway.usage.used),
+      })}`,
       close,
     };
   } catch(error){close();throw error;}
 }
 
-module.exports={openCourseLocalVibe,runtimePythonDirectories,withRuntimeTools};
+module.exports={courseWorkspaceName,openCourseLocalVibe,prepareCourseProfile,profileScore,runtimePythonDirectories,withRuntimeTools};

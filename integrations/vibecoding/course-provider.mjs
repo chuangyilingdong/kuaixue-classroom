@@ -1,6 +1,6 @@
 // Use the original Lingdong binding's public provider format in the course host's private profile.
 // The host creates a fresh profile per lease and disposes of it when the lease ends.
-import {mkdir,writeFile} from 'node:fs/promises';
+import {mkdir,rename,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 export async function provisionCourseProvider({profile,context,platform,gateway}) {
   if (context.mode !== 'VIBECODING' || !await platform.hasRuntimeAccess(context)) throw Error('课程工作区授权已失效');
@@ -20,5 +20,8 @@ export async function provisionCourseProvider({profile,context,platform,gateway}
   }};
   const dir=join(profile,'.zcode','v2');
   await mkdir(dir,{recursive:true,mode:0o700});
-  await writeFile(join(dir,'provider_config.json'),JSON.stringify(config),{flag:'wx',mode:0o600});
+  const target=join(dir,'provider_config.json');
+  const temporary=`${target}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(temporary,JSON.stringify(config),{flag:'wx',mode:0o600});
+  await rename(temporary,target);
 }

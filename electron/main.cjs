@@ -3,6 +3,7 @@ const { app, BrowserWindow, dialog, ipcMain, shell, protocol, net } = require("e
 const path = require("node:path");
 const {createHash}=require('node:crypto');
 const { pathToFileURL } = require("node:url");
+const fsp=require('node:fs/promises');
 const {localProjectStatus,projectPaths,writeSnapshotMetadata}=require('./local-project.cjs');
 const classroomWindows = new Set();
 const dist = path.resolve(__dirname, '../dist');
@@ -21,6 +22,53 @@ if (!singleInstance) {
 }
 const configFile = path.join(dist,'desktop-service.json');
 const config = require('node:fs').existsSync(configFile) ? JSON.parse(readFileSync(configFile,'utf8')) : {};
+let workspaceRootsCache=null;
+function workspaceRootsFile(){return path.join(app.getPath('userData'),'workspace-roots.json');}
+function directoryContains(root,target){
+  const relative=path.relative(root,target);
+  return relative===''||(!relative.startsWith('..')&&!path.isAbsolute(relative));
+}
+async function existingDirectory(value){
+  if(typeof value!=='string'||!value||!path.isAbsolute(value))throw Error('本机工程目录无效');
+  const resolved=await fsp.realpath(value);
+  if(!(await fsp.stat(resolved)).isDirectory())throw Error('本机工程路径不是文件夹');
+  return resolved;
+}
+async function workspaceRoots(){
+  if(workspaceRootsCache)return workspaceRootsCache;
+  let roots=[];
+  try {
+    const value=JSON.parse(await fsp.readFile(workspaceRootsFile(),'utf8'));
+    if(Array.isArray(value))roots=value.filter(item=>typeof item==='string'&&path.isAbsolute(item));
+  } catch {}
+  roots=(await Promise.all(roots.map(existingDirectory))).map(root=>path.resolve(root)).slice(-64);
+  workspaceRootsCache=roots;
+  return roots;
+}
+async function rememberWorkspaceRoot(value){
+  const root=await existingDirectory(value);
+  const roots=await workspaceRoots();
+  if(!roots.some(item=>path.resolve(item)===path.resolve(root))){
+    roots.push(path.resolve(root));
+    workspaceRootsCache=roots.slice(-64);
+    await fsp.mkdir(path.dirname(workspaceRootsFile()),{recursive:true});
+    await fsp.writeFile(workspaceRootsFile(),JSON.stringify(workspaceRootsCache),{mode:0o600});
+  }
+  return root;
+}
+async function authorizedWorkspaceDirectory(host,value){
+  const target=await existingDirectory(value||host.directory);
+  const defaults=[host.directory];
+  for(const candidate of defaults){
+    const root=await fsp.realpath(candidate).catch(()=>null);
+    if(root&&directoryContains(root,target))return target;
+  }
+  for(const root of await workspaceRoots()){
+    if(directoryContains(root,target))return target;
+  }
+  if(await host.authorizeWorkspace?.(target))return target;
+  throw Error('此工程目录尚未通过系统选择器授权，请重新选择项目文件夹');
+}
 const classroomEntry = config.integrated ? 'kuaixue://classroom/index.html' : pathToFileURL(path.join(dist,'index.html')).href;
 if (config.integrated) protocol.registerSchemesAsPrivileged([{scheme:'kuaixue', privileges:{standard:true,secure:true,supportFetchAPI:true,corsEnabled:true}}]);
 
@@ -142,13 +190,14 @@ ipcMain.handle('vibe:saveLocal',(event,request)=>{
   trustedWindow(event,classroomWindows);
   const host=requireCourseLocal(event.sender.id,request?.lease);
   if(request?.runId!==host.runId) throw Error('本机工作区与课程不符');
-  return host.snapshot();
+  return authorizedWorkspaceDirectory(host,request?.directory).then(directory=>host.snapshot(directory));
 });
 ipcMain.handle('vibe:previewLocal',(event,request)=>{
   trustedWindow(event,classroomWindows);
   const host=requireCourseLocal(event.sender.id,request?.lease);
   if(request?.runId!==host.runId) throw Error('本机工作区与课程不符');
-  return host.preview(Number(request?.knownMtime)||0);
+  return authorizedWorkspaceDirectory(host,request?.directory).then(directory=>
+    host.preview(directory,request?.file,Number(request?.knownMtime)||0));
 });
 ipcMain.handle('vibe:packLocal',async(event,request)=>{
   trustedWindow(event,classroomWindows);
@@ -221,7 +270,11 @@ ipcMain.handle('vibe:selectPaths',async(event,request)=>{
     title:kind==='directory'?'选择工作区文件夹':'选择文件',
     properties,
   });
-  return choice.canceled?{cancelled:true,paths:[]}:{cancelled:false,paths:choice.filePaths};
+  if(choice.canceled)return {cancelled:true,paths:[]};
+  if(kind==='directory'){
+    for(const selected of choice.filePaths)await rememberWorkspaceRoot(selected);
+  }
+  return {cancelled:false,paths:choice.filePaths};
 });
 ipcMain.handle('media:download',async(event,request)=>{
   trustedWindow(event,classroomWindows);

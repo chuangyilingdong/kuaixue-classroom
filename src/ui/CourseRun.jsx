@@ -36,6 +36,7 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
   const [workspaceState,setWorkspaceState] = useState(canvas || run.lease ? 'ready' : 'preparing');
   const [localLease,setLocalLease] = useState(null);
   const [localDirectory,setLocalDirectory] = useState('');
+  const [previewFile,setPreviewFile] = useState('');
   const [modelUsage,setModelUsage] = useState(null);
   const [previewOpen,setPreviewOpen] = useState(!canvas);
   const [previewUrl,setPreviewUrl] = useState('');
@@ -141,6 +142,7 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
       try {
         const next=await window.kuaixueDesktop?.vibe?.previewLocal({
           runId:run.id,lease:localLease,knownMtime:previewMtimeRef.current,
+          ...(localDirectory?{directory:localDirectory}:{}),...(previewFile?{file:previewFile}:{}),
         });
         if(cancelled||!next) return;
         previewMtimeRef.current=next.mtimeMs||0;
@@ -152,7 +154,7 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
     void refreshPreview();
     const timer=setInterval(refreshPreview,2500);
     return ()=>{cancelled=true;clearInterval(timer);};
-  },[canvas,localLease,previewOpen,previewRevision,run.id]);
+  },[canvas,localDirectory,localLease,previewFile,previewOpen,previewRevision,run.id]);
   useEffect(()=>{
     function workbenchError(event){
       if(event.source!==frameRef.current?.contentWindow||event.data?.type!=='kuaixue-workbench-error')return;
@@ -161,6 +163,15 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
     window.addEventListener('message',workbenchError);
     return ()=>window.removeEventListener('message',workbenchError);
   },[]);
+  useEffect(()=>{
+    const frame=frameRef.current;
+    if(canvas||!frameUrl||!frame||!modelUsage) return undefined;
+    const targetOrigin=new URL(frameUrl).origin;
+    const sendUsage=()=>frame.contentWindow?.postMessage({type:'kuaixue-vibe-usage',usage:modelUsage},targetOrigin);
+    sendUsage();
+    frame.addEventListener('load',sendUsage);
+    return ()=>frame.removeEventListener('load',sendUsage);
+  },[canvas,frameUrl,modelUsage]);
   useEffect(()=>{
     function workbenchPaths(event){
       const frame=frameRef.current;
@@ -189,12 +200,36 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
     window.addEventListener('message',workbenchPaths);
     return ()=>window.removeEventListener('message',workbenchPaths);
   },[]);
+  useEffect(()=>{
+    function workbenchPreview(event){
+      const frame=frameRef.current;
+      if(!frameUrl||event.source!==frame?.contentWindow||new URL(frameUrl).origin!==event.origin)return;
+      if(event.data?.type==='kuaixue-workbench-workspace'&&typeof event.data.directory==='string'&&
+          event.data.directory.length<=4096) {
+        setLocalDirectory(event.data.directory);
+        setPreviewFile('');
+        previewMtimeRef.current=0;
+        return;
+      }
+      if(event.data?.type==='kuaixue-open-html-preview'&&typeof event.data.directory==='string'&&
+          typeof event.data.file==='string'&&event.data.directory.length<=4096&&event.data.file.length<=4096) {
+        setLocalDirectory(event.data.directory);
+        setPreviewFile(event.data.file);
+        previewMtimeRef.current=0;
+        setPreviewOpen(true);
+      }
+    }
+    window.addEventListener('message',workbenchPreview);
+    return ()=>window.removeEventListener('message',workbenchPreview);
+  },[frameUrl]);
   const save = useCallback(async () => {
     if (pending.current) return false;
     pending.current=true;setBusy(true);
     try {
       if(!canvas&&localLease) {
-        const snapshot=await window.kuaixueDesktop?.vibe?.saveLocal({runId:run.id,lease:localLease});
+        const snapshot=await window.kuaixueDesktop?.vibe?.saveLocal({
+          runId:run.id,lease:localLease,...(localDirectory?{directory:localDirectory}:{}),
+        });
         if(!snapshot?.html) throw new Error('本机工程尚未生成 index.html。');
       }
       revision.current=await courseClient.save({id:run.id,mode:run.mode,revision:revision.current,completed:run.completed,
@@ -202,7 +237,7 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
       setNotice('作品已保存');return true;
     } catch(error) {setNotice(error.message);return false;}
     finally {pending.current=false;setBusy(false);}
-  },[run,canvas]);
+  },[run,canvas,localDirectory,localLease]);
   useLayoutEffect(()=>{saveBeforeLeaving.current=save;return ()=>{saveBeforeLeaving.current=null;};},[save,saveBeforeLeaving]);
   async function beforeGenerate({nodeId,modality,input}) {
     try {
@@ -223,13 +258,9 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
     : frameUrl ? <div className={`course-workbench-shell${previewOpen?' has-preview':''}`}>
       <div className="course-workbench-main">
         <iframe ref={frameRef} className="course-workbench" title="快学 VibeCoding 工作台" referrerPolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads allow-forms allow-modals" src={frameUrl}/>
-        {modelUsage ? <span className={`course-vibe-usage${modelUsage.limit>0&&modelUsage.remaining===0?' is-empty':''}`}
-          title={`本课程 VibeCoding 发送次数：已用 ${modelUsage.used}${modelUsage.limit===0?'，不限次数':` / ${modelUsage.limit}`}`}>
-          Vibe {usageText}
-        </span> : null}
       </div>
       {previewOpen ? <aside className="course-preview-pane" aria-label="作品预览">
-        <header><strong>作品预览</strong><span>{localDirectory?'index.html':'等待工作区'}</span>
+        <header><strong>作品预览</strong><span>{localDirectory?(previewFile.split(/[\\/]/).pop()||'index.html'):'等待工作区'}</span>
           <button type="button" onClick={()=>setPreviewRevision(value=>value+1)}>刷新</button>
           <button type="button" onClick={()=>setPreviewOpen(false)}>关闭</button>
         </header>

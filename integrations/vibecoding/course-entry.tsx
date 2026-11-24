@@ -51,6 +51,212 @@ function workspaceFileUrl(path: string) {
   return url.href;
 }
 
+type CourseUsage = {limit:number;used:number;remaining:number|null};
+
+type ClassroomWindowMessage = {
+  type:string;
+  directory?:string;
+  file?:string;
+  requestId?:string;
+};
+
+function readCourseUsage(source: URLSearchParams): CourseUsage | null {
+  const limit = Number(source.get('usageLimit'));
+  const used = Number(source.get('usageUsed'));
+  if (!Number.isSafeInteger(limit) || limit < 0 || !Number.isSafeInteger(used) || used < 0 || used > limit) return null;
+  return {limit,used,remaining:limit===0?null:Math.max(0,limit-used)};
+}
+
+function usageLabel(usage: CourseUsage) {
+  return usage.limit===0?'Vibe 不限':`Vibe ${usage.used}/${usage.limit}`;
+}
+
+function postToClassroom(message: ClassroomWindowMessage) {
+  window.parent.postMessage(message, '*');
+}
+
+function initialWorkspacePath() {
+  return (window as typeof window & {__kuaixueInitialWorkspace?:string}).__kuaixueInitialWorkspace || '';
+}
+
+function activeWorkspacePath(fallback = '') {
+  const declared = document.querySelector<HTMLElement>('[data-testid="workspace-path"][data-workspace-abs-path]')
+    ?.getAttribute('data-workspace-abs-path')?.trim();
+  if (declared) return declared;
+  const selected = document.querySelector<HTMLElement>('[data-task-item-key].bg-selected')
+    || document.querySelector<HTMLElement>('[data-task-item-key][aria-current="true"]');
+  const key = selected?.getAttribute('data-task-item-key')?.trim();
+  if (!key) return fallback;
+  const separator = key.lastIndexOf(':');
+  return separator > 1 ? key.slice(0, separator) : fallback;
+}
+
+function workspaceIndexFile(directory: string) {
+  return `${directory.replace(/[\\/]+$/,'')}${/[\\/]/.test(directory)?'\\':'/'}index.html`;
+}
+
+function fileUrlPath(url: string) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'file:' || parsed.host) return '';
+    return decodeURIComponent(parsed.pathname).replace(/^\/(?=[A-Za-z]:\/)/,'');
+  } catch {
+    return '';
+  }
+}
+
+function openCourseHtmlInClassroom(url: string) {
+  const directory = activeWorkspacePath();
+  const file = fileUrlPath(url);
+  if (!directory || !file || !/\.html?$/i.test(file)) return false;
+  postToClassroom({type:'kuaixue-open-html-preview',requestId:`html-${Date.now()}`,directory,file});
+  return true;
+}
+
+(globalThis as typeof globalThis & {
+  __kuaixueOpenCourseHtmlPreview?: (url: string) => boolean;
+}).__kuaixueOpenCourseHtmlPreview = openCourseHtmlInClassroom;
+
+function mountCourseUsage(initial: CourseUsage | null) {
+  let usage = initial;
+  const style = document.createElement('style');
+  style.dataset.kuaixueVibeUsageStyle = 'true';
+  style.textContent = `
+    .kuaixue-vibe-usage-context::before {
+      content: attr(data-kuaixue-vibe-usage);
+      display: inline-flex;
+      align-items: center;
+      height: 22px;
+      padding: 0 7px;
+      border: 1px solid var(--input-border, rgb(255 255 255 / 16%));
+      border-radius: 999px;
+      color: var(--foreground-subtle, currentColor);
+      background: color-mix(in srgb, var(--input, #1b1d21) 82%, transparent);
+      font-size: 10px;
+      font-weight: 500;
+      line-height: 20px;
+      letter-spacing: .01em;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+    .kuaixue-vibe-usage-context[data-kuaixue-vibe-empty="true"]::before {
+      border-color: rgb(255 120 120 / 45%);
+      color: #ffb4b4;
+    }
+  `;
+  document.head.append(style);
+
+  function sync() {
+    for (const trigger of document.querySelectorAll<HTMLElement>('[data-testid="chat-context-usage-trigger"]')) {
+      const wrapper = trigger.parentElement;
+      if (!wrapper) continue;
+      wrapper.classList.add('kuaixue-vibe-usage-context');
+      if (usage) {
+        const title = `本课程 VibeCoding 发送次数：已用 ${usage.used}${usage.limit===0?'，不限次数':` / ${usage.limit}`}`;
+        wrapper.dataset.kuaixueVibeUsage = usageLabel(usage);
+        wrapper.dataset.kuaixueVibeEmpty = String(usage.limit>0&&usage.remaining===0);
+        wrapper.title = title;
+        wrapper.setAttribute('aria-label', title);
+      } else {
+        delete wrapper.dataset.kuaixueVibeUsage;
+        delete wrapper.dataset.kuaixueVibeEmpty;
+        wrapper.removeAttribute('title');
+        wrapper.removeAttribute('aria-label');
+        wrapper.classList.remove('kuaixue-vibe-usage-context');
+      }
+    }
+  }
+
+  const observer = new MutationObserver(sync);
+  observer.observe(document.documentElement, {childList:true,subtree:true,attributes:true,attributeFilter:['class']});
+  window.addEventListener('message', event => {
+    if (event.source !== window.parent || event.data?.type !== 'kuaixue-vibe-usage') return;
+    const next = event.data.usage;
+    if (!Number.isSafeInteger(next?.limit) || next.limit < 0 ||
+        !Number.isSafeInteger(next?.used) || next.used < 0 || next.used > next.limit) return;
+    usage = {
+      limit:next.limit,
+      used:next.used,
+      remaining:next.limit===0?null:Number.isSafeInteger(next.remaining)?next.remaining:Math.max(0,next.limit-next.used),
+    };
+    sync();
+  });
+  sync();
+  return sync;
+}
+
+function mountCourseWorkspaceActions() {
+  let lastWorkspace = '';
+  const style = document.createElement('style');
+  style.dataset.kuaixueCourseWorkspaceStyle = 'true';
+  style.textContent = `
+    .kuaixue-html-preview-action {
+      display: inline-flex;
+      align-items: center;
+      height: 28px;
+      padding: 0 9px;
+      border: 1px solid var(--border, rgb(255 255 255 / 14%));
+      border-radius: 8px;
+      color: var(--foreground, currentColor);
+      background: var(--input, rgb(255 255 255 / 5%));
+      font: inherit;
+      font-size: 12px;
+      font-weight: 500;
+      line-height: 1;
+      cursor: pointer;
+      -webkit-app-region: no-drag;
+    }
+    .kuaixue-html-preview-action:hover {
+      border-color: var(--border-hover, rgb(255 255 255 / 28%));
+      background: var(--hover, rgb(255 255 255 / 9%));
+    }
+  `;
+  document.head.append(style);
+
+  document.addEventListener('click', event => {
+    const target = event.target;
+    if (!(target instanceof Element) || !target.closest('[data-kuaixue-html-preview]')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const current = activeWorkspacePath(initialWorkspacePath());
+    if (!current) return;
+    postToClassroom({
+      type:'kuaixue-open-html-preview',
+      requestId:`html-${Date.now()}`,
+      directory:current,
+      file:workspaceIndexFile(current),
+    });
+  }, true);
+
+  function sync() {
+    const directory = activeWorkspacePath(initialWorkspacePath());
+    if (directory && directory !== lastWorkspace) {
+      lastWorkspace = directory;
+      postToClassroom({type:'kuaixue-workbench-workspace',directory});
+    }
+    for (const header of document.querySelectorAll<HTMLElement>('[data-testid="workspace-header"]')) {
+      const actions = header.querySelector<HTMLElement>('[data-testid="workspace-more-button"]')?.parentElement;
+      if (!actions || actions.querySelector('[data-kuaixue-html-preview]')) continue;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'kuaixue-html-preview-action';
+      button.dataset.kuaixueHtmlPreview = 'true';
+      button.textContent = 'HTML 预览';
+      button.title = '在右侧打开当前工程中的 index.html';
+      actions.prepend(button);
+    }
+  }
+
+  const observer = new MutationObserver(sync);
+  observer.observe(document.documentElement, {
+    childList:true,
+    subtree:true,
+    attributes:true,
+    attributeFilter:['class','data-workspace-abs-path'],
+  });
+  sync();
+}
+
 function createWebPlatform(presets, openCourseHtmlPreview): CourseWebPlatform {
   return {
     classroom: {openCourseHtmlPreview, getPresets:async () => presets,getSnapshot:async () => null,
@@ -193,6 +399,8 @@ function reportToClassroom(message: string) {
 async function enterCourse() {
   const runId = launch.get('run');
   const ticket = launch.get('ticket');
+  const initialUsage = readCourseUsage(launch);
+  (window as typeof window & {__kuaixueInitialWorkspace?:string}).__kuaixueInitialWorkspace='';
   if (!ticket || !runId || window.parent === window) throw Error();
   const result = await fetch('/kuaixue/runtime/exchange', {
     method: 'POST', redirect: 'error', cache: 'no-store', credentials: 'omit',
@@ -207,6 +415,7 @@ async function enterCourse() {
   const runtime = await result.json();
   if (runtime.runId !== runId || !runtime.workspacePath || typeof runtime.socketId !== 'string' ||
       !/^[a-zA-Z0-9_-]{24,256}$/.test(runtime.socketId)) throw Error();
+  (window as typeof window & {__kuaixueInitialWorkspace?:string}).__kuaixueInitialWorkspace=runtime.workspacePath;
   if (runtime.previewToken != null && (typeof runtime.previewToken !== 'string' ||
       !/^[a-zA-Z0-9_-]{43}$/.test(runtime.previewToken))) throw Error();
   const protocol = location.protocol === 'https:' ? 'wss' : location.hostname === '127.0.0.1' ? 'ws' : null;
@@ -238,9 +447,11 @@ async function enterCourse() {
     <Root services={services} platform={createWebPlatform(runtime.presets ?? [], createCourseHtmlPreview(services.fileService, runtime.workspacePath, runtime.previewToken))} initialWorkspaceAbsPath={runtime.workspacePath}
       initialWorkspaceIdentity={runtime.workspaceIdentity} initialWorkspacePurpose="project"
       initialTaskDraft={initialProjectId ? {projectId: initialProjectId} : undefined}
-      restoreSession={false} allowOpenWorkspace
+      restoreSession allowOpenWorkspace
       supportsSettings={false} preferDirectoryBrowser={false} supportsEmbeddedBrowser={false} allowRemoteWorkspace={false} />
   </ZCodeIntlProvider></AppErrorBoundary>);
+  mountCourseUsage(initialUsage);
+  mountCourseWorkspaceActions();
 }
 root.render(<p role="status">正在打开课程工作区…</p>);
 void enterCourse().catch(error => {
