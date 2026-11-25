@@ -1,6 +1,9 @@
 import {useCallback,useEffect,useLayoutEffect,useRef,useState} from 'react';
 import {CourseCanvas} from '../../vendor/academy-canvas/CourseCanvas.jsx';
 import {courseClient} from '../services/courseClient.js';
+import CourseBrowserPane from './CourseBrowserPane.jsx';
+import {normalizeCourseBrowserUrl} from './courseBrowserUrl.js';
+import { ArrowLeft } from './icons.jsx';
 
 function uploadPreviewAsset(file) {
   if (file.size > 1_500_000) return Promise.reject(new Error('本机演示素材需小于 1.5 MiB，联网课程支持更大的素材。'));
@@ -37,6 +40,9 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
   const [localLease,setLocalLease] = useState(null);
   const [localDirectory,setLocalDirectory] = useState('');
   const [modelUsage,setModelUsage] = useState(null);
+  const [browserOpen,setBrowserOpen] = useState(false);
+  const [browserRequest,setBrowserRequest] = useState(null);
+  const browserRequestSequence = useRef(0);
   const localLeaseRef = useRef(null);
   const gatewayRef = useRef(null);
   const frameRef = useRef(null);
@@ -182,6 +188,39 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
     return ()=>window.removeEventListener('message',workbenchPaths);
   },[]);
   useEffect(()=>{
+    function workbenchBrowser(event){
+      const frame=frameRef.current;
+      if(!frameUrl||event.source!==frame?.contentWindow||new URL(frameUrl).origin!==event.origin||
+          event.data?.type!=='kuaixue-open-browser')return;
+      const mode=['toggle','new-tab','url'].includes(event.data.mode) ? event.data.mode : 'toggle';
+      const rawUrl=typeof event.data.url==='string' ? event.data.url.trim().slice(0,4096) : '';
+      const url=rawUrl ? normalizeCourseBrowserUrl(rawUrl) : '';
+      const error=typeof event.data.error==='string' ? event.data.error.slice(0,200) : '';
+      if(mode==='toggle'&&!rawUrl){
+        setBrowserOpen(value=>!value);
+        return;
+      }
+      setBrowserOpen(true);
+      setBrowserRequest({
+        id:++browserRequestSequence.current,mode:url ? 'url' : mode,url,error,
+      });
+    }
+    window.addEventListener('message',workbenchBrowser);
+    return ()=>window.removeEventListener('message',workbenchBrowser);
+  },[frameUrl]);
+  useEffect(()=>{
+    const stop=window.kuaixueDesktop?.browser?.onOpenUrl?.(request=>{
+      const url=normalizeCourseBrowserUrl(request?.url);
+      if(!url){
+        setNotice('网页弹窗地址不受支持');
+        return;
+      }
+      setBrowserOpen(true);
+      setBrowserRequest({id:++browserRequestSequence.current,mode:'url',url,error:''});
+    });
+    return stop;
+  },[]);
+  useEffect(()=>{
     function workbenchPreview(event){
       const frame=frameRef.current;
       if(!frameUrl||event.source!==frame?.contentWindow||new URL(frameUrl).origin!==event.origin)return;
@@ -197,6 +236,7 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
     if (pending.current) return false;
     pending.current=true;setBusy(true);
     try {
+      let previewError = '';
       if(!canvas&&localLease) {
         const snapshot=await window.kuaixueDesktop?.vibe?.saveLocal({
           runId:run.id,lease:localLease,...(localDirectory?{directory:localDirectory}:{}),
@@ -205,7 +245,14 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
       }
       revision.current=await courseClient.save({id:run.id,mode:run.mode,revision:revision.current,completed:run.completed,
         ...(canvas ? {work:work.current} : run.lease ? {lease:run.lease} : {})});
-      setNotice('作品已保存');return true;
+      if (!canvas && localLease) {
+        try {
+          await window.kuaixueDesktop.vibe.saveWorkPreview({
+            runId: run.id, lease: localLease, ...(localDirectory ? { directory: localDirectory } : {}),
+          });
+        } catch (error) { previewError = error.message; }
+      }
+      setNotice(previewError ? `作品已保存，预览暂不可用：${previewError}` : '作品已保存');return true;
     } catch(error) {setNotice(error.message);return false;}
     finally {pending.current=false;setBusy(false);}
   },[run,canvas,localDirectory,localLease]);
@@ -217,18 +264,20 @@ export default function CourseRun({run,close,saveBeforeLeaving}) {
     } catch(error) {setNotice(error.message);return false;}
   }
   return <section className="course-surface" aria-label={canvas?'学院画布工作区':'灵动 VibeCoding 工作区'}>
-    <header className="course-caption"><button disabled={busy} onClick={async()=>{if(await save()) close();}}>‹ 返回课程</button>
+    <header className="course-caption"><button disabled={busy} onClick={async()=>{if(await save()) close();}}><ArrowLeft size={16} />返回课程</button>
       <span>{run.course.title}</span>
       {!canvas&&localDirectory ? <button disabled={busy} onClick={()=>window.kuaixueDesktop?.vibe?.openLocalFolder({directory:localDirectory}).catch(error=>setNotice(error.message))}>打开工程目录</button> : null}
-      <button disabled={busy} onClick={save}>保存</button><output aria-live="polite">{notice}</output></header>
+      <button disabled={busy} onClick={save}>保存作品</button><output aria-live="polite">{notice}</output></header>
     {canvas ? <CourseCanvas course={run.course} initial={initial} onChange={onChange} beforeGenerate={beforeGenerate} quoteGeneration={quoteGeneration}
       recoverGeneration={recoverGeneration}
       onUploadFiles={uploadAsset}
       onGenerateNode={run.generationModes?.length ? ({nodeId})=>courseClient.generateTracked({id:run.id,nodeId,jobId:quotes.current.get(nodeId)}) : undefined}/>
-    : frameUrl ? <div className="course-workbench-shell">
+    : frameUrl ? <div className={`course-workbench-shell${browserOpen?' has-browser':''}`}>
       <div className="course-workbench-main">
         <iframe ref={frameRef} className="course-workbench" title="快学 VibeCoding 工作台" referrerPolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads allow-forms allow-modals" src={frameUrl}/>
       </div>
+      <CourseBrowserPane key={localLease || frameUrl} lease={localLease} setOpen={setBrowserOpen} open={browserOpen} request={browserRequest}
+        onClose={()=>setBrowserOpen(false)} onNotice={setNotice}/>
     </div>
     : <p role="alert" className="course-runtime-loading">{workspaceState==='preparing'?'正在打开工作区…':'工作台未连接，请返回课程后重试。'}</p>}
   </section>;

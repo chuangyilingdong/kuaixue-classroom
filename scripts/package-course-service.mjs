@@ -40,10 +40,13 @@ if(result.status!==0)throw new Error(`tar failed with status ${result.status}`);
 const bytes=(await stat(archive)).size;
 const sha256=await hash(archive);
 const commit=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim();
+const dirtyFiles=execFileSync('git',['status','--porcelain=v1'],{cwd:root,encoding:'utf8'})
+  .split(/\r?\n/).filter(Boolean);
 const manifest={
   releaseId,
   createdAt:new Date().toISOString(),
-  source:{directory:root,commit,state:'clean working tree'},
+  source:{directory:root,commit,state:dirtyFiles.length?'dirty working tree':'clean working tree',
+    ...(dirtyFiles.length?{dirtyFiles}:{})},
   artifact:'kuaixue-service-release.tar.gz',
   bytes,
   sha256,

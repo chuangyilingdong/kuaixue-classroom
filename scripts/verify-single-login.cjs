@@ -35,7 +35,7 @@ const server = http.createServer(async (req, res) => {
   if (!pathname.startsWith('/kuaixue/sign-in/')) {res.writeHead(404); res.end(); return;}
   const file = path.resolve(root, pathname.slice('/kuaixue/sign-in/'.length) || 'index.html');
   if (!file.startsWith(root + path.sep) || !fs.existsSync(file)) {res.writeHead(404);res.end();return;}
-  res.writeHead(200,{'Content-Type':{'.html':'text/html;charset=utf-8','.js':'text/javascript','.css':'text/css','.webp':'image/webp'}[path.extname(file)]});
+  res.writeHead(200,{'Content-Type':{'.html':'text/html;charset=utf-8','.js':'text/javascript','.css':'text/css','.webp':'image/webp','.mp4':'video/mp4','.png':'image/png'}[path.extname(file)]});
   res.end(fs.readFileSync(file));
 });
 app.whenReady().then(async () => {
@@ -50,10 +50,11 @@ app.whenReady().then(async () => {
     done({cancel: !details.url.startsWith(origin+'/') && !details.url.startsWith('data:')});
   });
   const win = new BrowserWindow({show:false,width:1440,height:900,webPreferences:{session:isolated,sandbox:true,offscreen:true}});
+  const styled = require('../electron/account-typography.cjs').applyAccountTypography(win.webContents, origin);
   const js = expr => win.webContents.executeJavaScript(expr);
   const wait = async (test) => { for(let i=0; i<100; i++) {if(await test())return; await delay(60);} throw Error(String(test)); };
   const tab = i => js(`document.querySelectorAll('.kx-tabs button')[${i}].click()`);
-  const open = () => win.loadURL(origin+'/kuaixue/sign-in/');
+  const open = async () => { await win.loadURL(origin+'/kuaixue/sign-in/'); await styled(); };
   try {
     await open(); await wait(()=>js('!!document.querySelector("input[name=phone]")'));
     assert.equal(await js('document.querySelector("#agree").checked'),false);

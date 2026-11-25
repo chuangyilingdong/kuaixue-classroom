@@ -1,0 +1,213 @@
+/* The same presentation is bundled locally and applied to the hosted account page. */
+html .kx-login {
+  --kx-ink: #213332;
+  --kx-muted: #78817b;
+  --kx-bronze: #af633e;
+  --kx-line: #d8dfd8;
+  display: grid;
+  align-items: center;
+  padding: 32px;
+  color-scheme: light;
+  background: radial-gradient(ellipse at 10% 0%, #faf9f4 0, transparent 55%), #eeede8;
+  font-size: 14px;
+}
+html .kx-login .kx-login-page {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: min(1280px, 100%);
+  min-height: calc(100dvh - 64px);
+  margin: 0 auto;
+  padding: 48px calc(54% + 4.5vw) 24px 4.5vw;
+  border: 1px solid #ffffffde;
+  border-radius: 22px;
+  background: #fffefa;
+  box-shadow: 0 4px 8px #304a4610, 0 28px 72px #304a461c;
+  overflow: hidden;
+}
+html .kx-login .kx-login-media {
+  position: absolute;
+  z-index: -1;
+  inset: -1px -1px -1px 46%;
+  border-left: 1px solid #27746f15;
+  background: #08080c;
+  overflow: hidden;
+  pointer-events: none;
+}
+html .kx-login .kx-login-ambient {
+  position: absolute;
+  inset: -40px;
+  background-size: cover;
+  background-position: center;
+  filter: blur(22px) brightness(.65);
+  animation: kx-login-drift 24s linear infinite alternate;
+}
+html .kx-login .kx-login-media video {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+}
+@keyframes kx-login-drift {
+  from { transform: translate3d(-2%, -2%, 0) scale(1.08); }
+  to { transform: translate3d(2%, 2%, 0) scale(1.16); }
+}
+@media (prefers-reduced-motion: reduce) {
+  html .kx-login .kx-login-ambient { animation: none; }
+}
+html .kx-login .kx-login-page::before { display: none; }
+html .kx-login .kx-column {
+  flex: 0 0 auto;
+  width: min(340px, 100%);
+  margin: auto 0;
+  text-align: left;
+}
+html .kx-login .kx-logo {
+  width: 88px;
+  height: 88px;
+  object-fit: contain;
+  border-radius: 8px;
+  margin: 0;
+  filter: none;
+}
+html .kx-login h1,
+html .kx-login .kx-login-page[data-method=wechat] h1 {
+  margin: 28px 0 24px;
+  color: #203331;
+  font-size: 23px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0;
+}
+html .kx-login .kx-tabs {
+  gap: 12px;
+  border-bottom: 1px solid #e1e5de;
+}
+html .kx-login .kx-tabs button,
+html .kx-login .kx-login-page[data-method=wechat] .kx-tabs button {
+  min-height: 44px;
+  height: auto;
+  color: #7a837c;
+  font-weight: 500;
+}
+html .kx-login .kx-tabs button + button::before { display: none; }
+html .kx-login .kx-tabs span { padding: 10px 8px 12px; font-size: 14px; }
+html .kx-login .kx-tabs [aria-selected=true],
+html .kx-login .kx-tabs [aria-pressed=true] { color: #263d36; }
+html .kx-login .kx-tabs [aria-selected=true] span,
+html .kx-login .kx-tabs [aria-pressed=true] span { border-color: #b7754e; }
+html .kx-login .kx-fields { padding-top: 18px; }
+html .kx-login .kx-field,
+html .kx-login .kx-login-page[data-method=email] .kx-field {
+  height: 54px;
+  margin: 0 0 12px;
+  gap: 12px;
+  padding: 0 14px;
+  border: 1px solid #dce2da;
+  border-radius: 9px;
+  background: #f7f8f3;
+  box-shadow: inset 0 1px 2px #263e3610;
+}
+html .kx-login .kx-field:focus-within,
+html .kx-login .kx-login-page[data-method=email] .kx-field:focus-within {
+  border-color: #68968d;
+  box-shadow: 0 0 0 3px #729d8f1a;
+}
+html .kx-login .kx-login-page[data-method=email] .kx-field:first-child { border-color: #dce2da; }
+html .kx-login .kx-field input,
+html .kx-login .kx-field .kx-field-launch { color: #283d35; font-size: 14px; }
+html .kx-login .kx-field input::placeholder,
+html .kx-login .kx-field .kx-field-launch { color: #8b938b; }
+html .kx-login .kx-prefix {
+  padding-right: 12px;
+  border-color: #d1d8cf;
+  color: #394f45;
+  font-size: 14px;
+}
+html .kx-login .kx-field .kx-send { flex: none; color: #a5643e; font-size: 12px; }
+html .kx-login .kx-submit,
+html .kx-login .kx-login-page[data-method=email] .kx-submit {
+  min-height: 48px;
+  margin-top: 10px;
+  padding: 12px 16px;
+  border: 1px solid #244f44;
+  border-radius: 9px;
+  background: linear-gradient(180deg, #2e5548, #203e34);
+  box-shadow: 0 1px 1px #ffffff33 inset, 0 5px 10px #263d3626;
+  color: #fffef6;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: .12em;
+  text-indent: .12em;
+}
+html .kx-login .kx-submit:hover:enabled { background: #355e4e; }
+html .kx-login .kx-submit:active:enabled { box-shadow: inset 0 2px 4px #0c201a40; }
+html .kx-login .kx-recover { padding: 2px 0 12px; color: #748075; font-size: 12px; }
+html .kx-login .kx-agreement {
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 8px;
+  margin-top: 18px;
+  color: #7c857c;
+  font-size: 11px;
+  line-height: 1.8;
+}
+html .kx-login .kx-agreement input {
+  width: 15px;
+  height: 15px;
+  margin-top: 3px;
+  border-color: #aeb9ac;
+  border-radius: 3px;
+  background: #fffefa;
+}
+html .kx-login .kx-agreement input:checked { border-color: #366250; background: #366250; }
+html .kx-login .kx-agreement input:checked::after { border-color: #fff; }
+html .kx-login .kx-agreement a { color: #465c4c; }
+html .kx-login .kx-scope { max-width: none; margin: 10px 0 0; color: #879086; font-size: 11px; line-height: 1.8; }
+html .kx-login .kx-status { margin: 12px 0 0; color: #a0633f; font-size: 12px; line-height: 1.7; }
+html .kx-login .kx-status:empty { margin: 0; }
+html .kx-login .kx-login-page footer {
+  flex: none;
+  width: min(340px, 100%);
+  margin: 28px 0 0;
+  padding-top: 0;
+  color: #94998f;
+  text-align: left;
+  font-size: 10px;
+  letter-spacing: .08em;
+}
+html .kx-login .kx-scan { min-height: 160px; padding-top: 16px; text-align: center; }
+html .kx-login .kx-code-frame { margin-top: 4px; }
+html .kx-login .kx-scan p { color: #526a5b; font-size: 13px; line-height: 1.7; }
+html .kx-login .kx-scan > small { color: #879086; font-size: 11px; }
+html .kx-login .kx-login-page[data-method=wechat] .kx-agreement { margin-top: 18px; }
+html .kx-login .kx-demo { display: block; margin-top: 12px; color: #7c857c; font-size: 11px; }
+html .kx-login .kx-preview-label { z-index: 1; top: 10px; color: #848a7f; font-size: 10px; }
+html .kx-login .kx-back { z-index: 1; color: #6c796c; }
+html .kx-login .kx-auth-header { color: #6c796c; }
+html .kx-login .kx-auth-header button { color: #334d3e; }
+html .kx-login .kx-back, html .kx-login .kx-auth-header button { display: inline-flex; align-items: center; gap: 6px; }
+html .kx-login :focus-visible { outline-color: #8e6845; }
+@media (max-height: 760px) and (min-width: 761px) {
+  html .kx-login { padding: 20px; }
+  html .kx-login .kx-login-page { min-height: calc(100dvh - 40px); padding-top: 24px; padding-bottom: 18px; }
+  html .kx-login .kx-logo { width: 82px; }
+  html .kx-login h1,
+  html .kx-login .kx-login-page[data-method=wechat] h1 { margin: 18px 0; font-size: 21px; }
+  html .kx-login .kx-login-page footer { margin-top: 20px; }
+}
+@media (max-width: 760px) {
+  html .kx-login { padding: 16px; }
+  html .kx-login .kx-login-page { min-height: calc(100dvh - 32px); padding: 36px 26px 24px; }
+  html .kx-login .kx-login-media { display: none; }
+  html .kx-login .kx-column { width: min(340px, 100%); }
+  html .kx-login .kx-login-page footer { width: min(340px, 100%); }
+}
+@media (max-width: 420px) {
+  html .kx-login .kx-login-page { padding-inline: 22px; border-radius: 17px; }
+  html .kx-login .kx-logo { width: 88px; }
+}

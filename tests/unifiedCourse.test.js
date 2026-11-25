@@ -58,7 +58,13 @@ test('staging: published dual version, confirmed wallet order, recovery, refund 
   assert.deepEqual((await alice.works()).map(w=>w.mode).sort(),['CANVAS','VIBECODING']);
   assert.deepEqual(await bob.works(),[]);
   const next = platform.publish('operator',{...draft,id:course.id,baseVersion:course.versionId,permittedDeliveryModes:['CANVAS'],price:0});
-  await alice.purchase(next.id,next.versionId);
+  // A historical course-level purchase authorizes the newly published version without another purchase.
+  const nextCanvas = await alice.start(next.id,next.versionId,'CANVAS');
+  const inherited = await platform.purchase('alice',{courseId:next.id,versionId:next.versionId});
+  assert.deepEqual(inherited,{orderId:null,courseId:course.id,versionId:next.versionId,status:'confirmed',inherited:true});
+  assert.equal(orders.size,1);
+  await alice.save({...nextCanvas,completed:['plan'],work:snapshot});
+  assert.equal((await alice.works()).find(item=>item.mode==='CANVAS').versionId,next.versionId);
   await assert.rejects(alice.start(next.id,next.versionId,'VIBECODING'),/权益/);
   platform.hide('operator',{id:next.id,baseVersion:next.versionId});
   const restored = await alice.start(...args,'CANVAS');assert.deepEqual(restored.work,snapshot);assert.deepEqual(restored.completed,[]);

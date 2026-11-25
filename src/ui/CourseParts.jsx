@@ -7,7 +7,7 @@ import {
   ImageOff,
   RefreshCw,
   UserRound,
-} from "lucide-react";
+} from "./icons.jsx";
 
 export const typeName = (course) =>
   (course.permittedDeliveryModes || []).map(mode => mode === "CANVAS" ? "画布课程" : "VibeCoding").join(" + ") || "读取中";

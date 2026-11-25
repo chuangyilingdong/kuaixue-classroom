@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Eye, EyeOff, ScanLine } from 'lucide-react';
+import { ArrowLeft, Eye, EyeOff, ScanLine } from './icons.jsx';
+import LoginMedia from './LoginMedia.jsx';
 import logo from '../assets/login/kx-class.webp';
 import previewCode from '../assets/login/preview-code.svg';
 import './login.css';
@@ -21,7 +22,7 @@ export default function LoginScreen({ onAuthorize, onDemo, authorizing, onCancel
   const preview = !onAuthorize;
 
   useEffect(() => {
-    window.kuaixueDesktop?.setTheme?.('dark');
+    window.kuaixueDesktop?.setTheme?.('light');
   }, []);
 
   function select(next) {
@@ -67,9 +68,10 @@ export default function LoginScreen({ onAuthorize, onDemo, authorizing, onCancel
 
   return <main className="kx-login" aria-labelledby="kx-login-title">
     {authorizing && <header className="kx-auth-header"><div className="kx-drag" aria-hidden="true" />
-      <button type="button" onClick={onCancel}>← 返回登录</button><span id="kx-auth-title">创易灵动 · 账号授权</span>
+      <button type="button" onClick={onCancel}><ArrowLeft size={15} />返回登录</button><span id="kx-auth-title">创易灵动 · 账号授权</span>
     </header>}
     <div className="kx-login-page" data-method={method} hidden={authorizing}>
+      <LoginMedia />
       <div className="kx-drag" aria-hidden="true" />
       {preview && <span className="kx-preview-label">界面预览 · 请勿输入真实账号</span>}
       <div className="kx-column">

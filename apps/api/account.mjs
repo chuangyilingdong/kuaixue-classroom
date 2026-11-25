@@ -4,12 +4,15 @@ import { readAccount, readEntitlements } from '../../src/data/account.js';
 // listGrants is scoped to the subject. The mapper checks ownership again.
 export class WalletUnavailable extends Error {}
 
-export function createAccountReader({ identity, mainSite, listGrants, fetchImpl = fetch }) {
+export function createAccountReader({ identity, mainSite, publicMainSite = mainSite, listGrants, fetchImpl = fetch }) {
   const base = new URL(mainSite);
+  const publicBase = new URL(publicMainSite);
   if (base.protocol !== 'https:' && !(base.protocol === 'http:' && ['127.0.0.1','localhost'].includes(base.hostname))) throw new Error('Invalid account service origin');
+  if (publicBase.protocol !== 'https:' && !(publicBase.protocol === 'http:' && ['127.0.0.1','localhost'].includes(publicBase.hostname))) throw new Error('Invalid public account service origin');
   async function read(path, token) {
     const response = await fetchImpl(new URL(path, base), {
-      headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
+      headers: { Accept: 'application/json', Authorization: `Bearer ${token}`,
+        'X-Forwarded-Host': publicBase.host, 'X-Forwarded-Proto': publicBase.protocol.slice(0, -1) },
       redirect: 'error', signal: AbortSignal.timeout(7000),
     });
     if (!response.ok) throw new Error('Main-site read failed');

@@ -17,10 +17,12 @@ export function groupActiveGrants(grants, courses) {
       courseId: group.courseId,
       course,
       grant,
-      target: { ...course, id: group.courseId, versionId: grant.versionId,
+      // 任意历史版本的有效购买都继承到当前发布版本。
+      target: { ...course, id: group.courseId, versionId: course?.versionId || grant.versionId,
         title: grant.title || course?.title || '已购课程' },
       versionCount: group.grants.length,
-      currentOwned: Boolean(currentGrant),
+      currentOwned: Boolean(course),
+      inherited: Boolean(course && !currentGrant),
     };
   });
 }

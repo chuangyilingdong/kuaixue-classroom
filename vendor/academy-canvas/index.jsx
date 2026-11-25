@@ -26,6 +26,7 @@ import { ratioThumbSize } from './ratioThumb.js';
 import { BOX_EMPTY_ART, isProtectedBoxNode } from './boxRules.js';
 import { displayCanvasModelLabel } from './canvasBoxNode.js';
 import { AudioPlayer } from './AudioPlayer.jsx';
+import { Icon } from './icons.jsx';
 
 const CanvasActionsContext = createContext(null);
 // 受鉴权保护的素材地址（/api/**）不能直接塞进 <img>/<video>/<audio> 的 src：那些请求带不了
@@ -37,8 +38,8 @@ const EMPTY_VIEWPORT = { x: 0, y: 0, zoom: 1 };
 
 // 拖进来的文件在「上传中 / 上传失败」时的框体内容（四个媒体节点共用，只是外层类名不同）
 function UploadState({ className, data }) {
-  if (data.uploading === true) return <div className={`${className} is-uploading`}><span>⏳</span><small>上传中…</small></div>;
-  if (data.uploadError) return <div className={`${className} is-upload-error`}><span>⚠</span><small>上传失败：{data.uploadError}</small></div>;
+  if (data.uploading === true) return <div className={`${className} is-uploading`}><Icon name="loading" /><small>上传中…</small></div>;
+  if (data.uploadError) return <div className={`${className} is-upload-error`}><Icon name="attention" /><small>上传失败：{data.uploadError}</small></div>;
   return null;
 }
 
@@ -486,7 +487,7 @@ function NodePort({ side }) {
     title="拖动这里连线到另一个框体"
     aria-label={side === 'left' ? '从左侧拖出连线' : '从右侧拖出连线'}
   >
-    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+    <Icon name="plus" size={11} />
   </Handle>;
 }
 
@@ -553,7 +554,7 @@ function PanelFooter({ state, error, label = '生成', disabled = false, hint, o
   return <div className="learning-node__panel-footer nodrag">
     <span className={`learning-node__status-chip${tone}`}>{text}</span>
     {extra}
-    {onGenerate && state !== 'running' ? <button type="button" className="learning-node__submit" disabled={disabled} title={hint || label} onClick={onGenerate}>{label}<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg></button> : null}
+    {onGenerate && state !== 'running' ? <button type="button" className="learning-node__submit" disabled={disabled} title={hint || label} onClick={onGenerate}>{label}<Icon name="up" size={13} /></button> : null}
   </div>;
 }
 
@@ -576,7 +577,7 @@ function RefThumb({ url, label, index, onRemove = null }) {
         title="删除这个参考"
         aria-label={`删除参考 ${label}`}
         onClick={(event) => { event.stopPropagation(); onRemove(); }}
-      >×</button> : null}
+      ><Icon name="close" size={12} /></button> : null}
     </span>
     <figcaption className="learning-node__ref-thumb-label">{label}</figcaption>
     {shown ? <span className="learning-node__ref-thumb-pop"><img src={shown} alt={`${label} 预览`} /></span> : null}
@@ -700,7 +701,7 @@ function CopyTextButton({ text, onCopied }) {
 function PromptNode({ id, data, selected }) {
   const { updateNode } = useCanvasActions();
   const generated = String(data.generatedText || '');
-  return <NodeFrame icon="✎" tone="prompt" aspectRatio={boxDisplayRatio(data)} processing={data.generationStatus === 'PENDING'} title={data.title} selected={selected} onRename={(value) => updateNode(id, { title: value })} headingExtra={generated ? <CopyTextButton text={generated} /> : null}>
+  return <NodeFrame icon={<Icon name="text" />} tone="prompt" aspectRatio={boxDisplayRatio(data)} processing={data.generationStatus === 'PENDING'} title={data.title} selected={selected} onRename={(value) => updateNode(id, { title: value })} headingExtra={generated ? <CopyTextButton text={generated} /> : null}>
     {generated
       ? <div className={`learning-node__text-wrap nodrag ${NO_WHEEL_ZOOM_CLASS}`}>
         <div className="learning-node__text-result">{generated}</div>
@@ -798,7 +799,7 @@ function ImageNode({ id, data, selected }) {
   // 框体预置素材：老师为这个框体上传的参考图，生成前先给学生看。
   const referenceUrl = !data.previewUrl && !data.assetUrl ? String(data.referenceUrl || '') : '';
   const imageUrl = useDisplayUrl(data.previewUrl || data.assetUrl || referenceUrl);
-  return <NodeFrame icon="✦" tone="image" aspectRatio={boxDisplayRatio(data)} variant="media" processing={data.generationStatus === 'PENDING' || data.uploading === true} title={data.title} selected={selected} onRename={(value) => updateNode(id, { title: value })}
+  return <NodeFrame icon={<Icon name="image" />} tone="image" aspectRatio={boxDisplayRatio(data)} variant="media" processing={data.generationStatus === 'PENDING' || data.uploading === true} title={data.title} selected={selected} onRename={(value) => updateNode(id, { title: value })}
     headingExtra={<MediaDownloadButton url={data.assetUrl || data.previewUrl || referenceUrl} name={data.title} kind="image"/>}>
     {data.uploading === true || data.uploadError ? <UploadState className="learning-node__art" data={data} />
       : data.generationStatus === 'PENDING' ? <GeneratingState className="learning-node__art" modality="IMAGE" startedAt={data.generationStartedAt} />
@@ -809,7 +810,7 @@ function ImageNode({ id, data, selected }) {
 }
 function CharacterNode({ id, data, selected }) {
   const { updateNode } = useCanvasActions();
-  return <NodeFrame icon="♙" tone="character" aspectRatio={boxDisplayRatio(data)} processing={data.generationStatus === 'PENDING'} title={data.title || '故事角色'} selected={selected}>
+  return <NodeFrame icon={<Icon name="user" />} tone="character" aspectRatio={boxDisplayRatio(data)} processing={data.generationStatus === 'PENDING'} title={data.title || '故事角色'} selected={selected}>
     <div className="learning-node__character-art">{data.emoji || '🧒'}</div>
     <input className="learning-node__input nodrag" value={data.name || ''} placeholder="角色名字" maxLength={40} onChange={(event) => updateNode(id, { name: event.target.value })} />
     <input className="learning-node__input learning-node__input--compact nodrag" value={data.trait || ''} placeholder="性格、能力或目标" maxLength={80} onChange={(event) => updateNode(id, { trait: event.target.value })} />
@@ -820,7 +821,7 @@ function CharacterNode({ id, data, selected }) {
 
 function SceneNode({ id, data, selected }) {
   const { updateNode } = useCanvasActions();
-  return <NodeFrame icon="⌂" tone="scene" aspectRatio={boxDisplayRatio(data)} processing={data.generationStatus === 'PENDING'} title={data.title || '故事场景'} selected={selected}>
+  return <NodeFrame icon={<Icon name="home" />} tone="scene" aspectRatio={boxDisplayRatio(data)} processing={data.generationStatus === 'PENDING'} title={data.title || '故事场景'} selected={selected}>
     <div className="learning-node__scene-art"><span>{data.emoji || '🌲'}</span><small>{data.mood || '神秘氛围'}</small></div>
     <input className="learning-node__input nodrag" value={data.place || ''} placeholder="场景地点" maxLength={60} onChange={(event) => updateNode(id, { place: event.target.value })} />
     <input className="learning-node__input learning-node__input--compact nodrag" value={data.mood || ''} placeholder="氛围，例如：温暖、紧张" maxLength={80} onChange={(event) => updateNode(id, { mood: event.target.value })} />
@@ -841,12 +842,14 @@ function VideoNode({ id, data, selected }) {
   // 只有生成出来的图/视频/音频才会出现在框体内」）。所以这里只看框体自己的预置素材和自己的生成结果；
   // 连线素材只在底部面板的「参考/首帧」行里出现，生成时再一起提交。
   const sourceUrl = useDisplayUrl(referenceUrl);
-  return <NodeFrame icon="▶" tone="video" aspectRatio={boxDisplayRatio(data)} variant="media" processing={data.generationStatus === 'PENDING' || data.uploading === true} title={data.title} selected={selected} onRename={(value) => updateNode(id, { title: value })}
+  return <NodeFrame icon={<Icon name="video" />} tone="video" aspectRatio={boxDisplayRatio(data)} variant="media" processing={data.generationStatus === 'PENDING' || data.uploading === true} title={data.title} selected={selected} onRename={(value) => updateNode(id, { title: value })}
     headingExtra={<MediaDownloadButton url={data.assetUrl || data.previewUrl} name={data.title} kind="video"/>}>
     {data.uploading === true || data.uploadError ? <UploadState className="learning-node__video-preview" data={data} />
       : data.generationStatus === 'PENDING' ? <GeneratingState className="learning-node__video-preview" modality="VIDEO" startedAt={data.generationStartedAt} />
       : videoUrl
-        ? <video className="learning-node__media" controls playsInline preload="none" src={videoUrl} />
+        // `preload="none"` 会让浏览器只画播放器控件，已生成视频静置时显示黑块。
+        // 元数据预载足以让 Chromium 绘制首帧作为画布预览，同时不会主动播放。
+        ? <video className="learning-node__media" controls playsInline preload="metadata" src={videoUrl} />
         : sourceUrl
           // 画面本体就是卡片，按素材自身比例铺满；画面也可以直接拖着走（不再有「点图放大」）
           ? <img className="learning-node__media" src={sourceUrl} alt="画面来源" loading="lazy" decoding="async" />
@@ -856,7 +859,7 @@ function VideoNode({ id, data, selected }) {
 
 function NoteNode({ id, data, selected }) {
   const { updateNode } = useCanvasActions();
-  return <NodeFrame icon="☼" tone="note" aspectRatio={boxDisplayRatio(data)} processing={data.generationStatus === 'PENDING'} title={data.title || '创作便签'} selected={selected}>
+  return <NodeFrame icon={<Icon name="text" />} tone="note" aspectRatio={boxDisplayRatio(data)} processing={data.generationStatus === 'PENDING'} title={data.title || '创作便签'} selected={selected}>
     <textarea className="learning-node__textarea nodrag" value={data.text || ''} placeholder="记录一个创作想法…" maxLength={300} onChange={(event) => updateNode(id, { text: event.target.value })} />
     {selected && <span className="learning-node__hint">便签可以保存你的灵感</span>}
   </NodeFrame>;
@@ -890,7 +893,7 @@ function AudioNode({ id, data, selected }) {
   //    前者拿去下载（同源才认 download 属性），后者留给 <audio> 播放。
   const rawAudioUrl = String(data.previewUrl || data.assetUrl || '');
   const audioUrl = useDisplayUrl(rawAudioUrl);
-  return <NodeFrame icon="♫" tone="audio" aspectRatio={boxDisplayRatio(data)} processing={data.generationStatus === 'PENDING' || data.uploading === true} title={data.title} selected={selected} onRename={(value) => updateNode(id, { title: value })}>
+  return <NodeFrame icon={<Icon name="music" />} tone="audio" aspectRatio={boxDisplayRatio(data)} processing={data.generationStatus === 'PENDING' || data.uploading === true} title={data.title} selected={selected} onRename={(value) => updateNode(id, { title: value })}>
     {data.uploading === true || data.uploadError ? <UploadState className="learning-node__audio-placeholder" data={data} />
       : data.generationStatus === 'PENDING' ? <GeneratingState className="learning-node__audio-placeholder" modality="MUSIC" startedAt={data.generationStartedAt} />
       : audioUrl
@@ -906,11 +909,11 @@ function AudioNode({ id, data, selected }) {
 function AnimationNode({ id, data, selected }) {
   const { updateNode } = useCanvasActions();
   const videoUrl = useDisplayUrl(data.previewUrl || data.assetUrl);
-  return <NodeFrame icon="✧" tone="animation" aspectRatio={boxDisplayRatio(data)} variant="media" processing={data.generationStatus === 'PENDING' || data.uploading === true} title={data.title} selected={selected} onRename={(value) => updateNode(id, { title: value })}>
+  return <NodeFrame icon={<Icon name="video" />} tone="animation" aspectRatio={boxDisplayRatio(data)} variant="media" processing={data.generationStatus === 'PENDING' || data.uploading === true} title={data.title} selected={selected} onRename={(value) => updateNode(id, { title: value })}>
     {data.uploading === true || data.uploadError ? <UploadState className="learning-node__animation-placeholder" data={data} />
       : data.generationStatus === 'PENDING' ? <GeneratingState className="learning-node__animation-placeholder" modality="VIDEO" startedAt={data.generationStartedAt} />
       : videoUrl
-        ? <video className="learning-node__media" controls muted loop preload="none" src={videoUrl} />
+        ? <video className="learning-node__media" controls muted loop preload="metadata" src={videoUrl} />
         : <div className="learning-node__animation-placeholder learning-node__art--illustration"><img src={BOX_EMPTY_ART} alt="还没生成 —— 在底部面板写提示词，生成动画" loading="lazy" /></div>}
   </NodeFrame>;
 }
@@ -933,7 +936,7 @@ function GlowEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targ
         title="删除这条连接"
         aria-label="删除这条连接"
         onClick={(event) => { event.stopPropagation(); removeEdge(id); }}
-      >×</button>
+      ><Icon name="close" size={12} /></button>
     </EdgeLabelRenderer> : null}
   </>;
 }
@@ -1165,12 +1168,12 @@ function NodeEditPanel({ node, onRequestMaterials, boxModalities = [] }) {
     /> : null}
     <SlotParamPickers id={id} data={data} />
     <div className="learning-node__panel-footer nodrag">
-      <button type="button" className="learning-canvas__config-chip" title="本框体的生成配置来自课时设置" onClick={() => onRequestMaterials?.()}>✦ {configLabel}</button>
+      <button type="button" className="learning-canvas__config-chip" title="本框体的生成配置来自课时设置" onClick={() => onRequestMaterials?.()}><Icon name="image" /> {configLabel}</button>
       <span className="learning-canvas__panel-spacer" />
       <span className={`learning-node__status-chip${statusState === 'running' ? ' is-running' : statusState === 'failed' ? ' is-error' : (statusState === 'done' || statusState === 'asset') ? ' is-done' : ''}`}>{statusState === 'running' ? '生成中…' : statusState === 'failed' ? (data.generationError || '生成失败') : statusState === 'done' ? '已生成' : statusState === 'asset' ? '素材' : '未生成'}</span>
       {canGenerate && canGenerateHere && generate && statusState !== 'running' && !alreadyProduced ? <>
         <GenerationPrice nodeId={id} modality={generate.modality} input={generate.payload} quoteGeneration={quoteGeneration}/>
-        <button type="button" className="learning-node__submit" disabled={readOnly || Boolean(generate.blocked)} title={generate.blocked || generate.label} onClick={() => generateNode(id, generate.modality, generate.payload)}>{generate.label}<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg></button>
+        <button type="button" className="learning-node__submit" disabled={readOnly || Boolean(generate.blocked)} title={generate.blocked || generate.label} onClick={() => generateNode(id, generate.modality, generate.payload)}>{generate.label}<Icon name="up" size={13} /></button>
       </> : null}
     </div>
     {/* ⚠️ 这里原来会把 generate.blocked（「先写下画面描述，再生成」这类前置提示）渲染成一条红色提示。
@@ -1843,20 +1846,20 @@ function CanvasSurface({ initialSnapshot, readOnly, onChange, onGenerateNode, re
       </ReactFlow>
       {!readOnly && activeNode ? <CanvasDockPanel node={activeNode} containerRef={canvasRef} viewportBusy={viewportBusy} onRequestRoom={requestRoom} onRequestMaterials={onRequestMaterials} boxModalities={boxModalities} /> : null}
       {!readOnly && <div className="learning-canvas__toolbar">
-        <button type="button" className="learning-canvas__toolbar-btn" title="撤销（Ctrl+Z）" aria-label="撤销" onClick={undo}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 7L4 12l5 5M4 12h9a6 6 0 0 1 6 6"/></svg></button>
-        <button type="button" className="learning-canvas__toolbar-btn" title="重做（Ctrl+Y）" aria-label="重做" onClick={redo}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 7l5 5-5 5M20 12h-9a6 6 0 0 0-6 6"/></svg></button>
+        <button type="button" className="learning-canvas__toolbar-btn" title="撤销（Ctrl+Z）" aria-label="撤销" onClick={undo}><Icon name="undo" size={18} /></button>
+        <button type="button" className="learning-canvas__toolbar-btn" title="重做（Ctrl+Y）" aria-label="重做" onClick={redo}><Icon name="redo" size={18} /></button>
         <span className="learning-canvas__toolbar-sep" />
-        <button type="button" className="learning-canvas__toolbar-btn" title="适配视图" aria-label="适配视图" onClick={() => fitView({ padding: CANVAS_FIT_PADDING, duration: 320, maxZoom: 1.2 })}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 9V5h4M20 9V5h-4M4 15v4h4M20 15v4h-4"/></svg></button>
+        <button type="button" className="learning-canvas__toolbar-btn" title="适配视图" aria-label="适配视图" onClick={() => fitView({ padding: CANVAS_FIT_PADDING, duration: 320, maxZoom: 1.2 })}><Icon name="fit" size={18} /></button>
         <span className="learning-canvas__toolbar-sep" />
         {/* 缩放：− 百分比 ＋，点百分比出档位（50% / 100% / 800%）。
             学生要放大看素材细节，而以前上限只有 180%（用户 2026-09-17 报「放大最多就放大这么多了」）。 */}
         <div className="learning-canvas__zoom">
-          <button type="button" className="learning-canvas__toolbar-btn" title="缩小" aria-label="缩小" onClick={() => { setZoomMenu(false); zoomOut({ duration: 160 }); }}>−</button>
+          <button type="button" className="learning-canvas__toolbar-btn" title="缩小" aria-label="缩小" onClick={() => { setZoomMenu(false); zoomOut({ duration: 160 }); }}><Icon name="dash" size={16} /></button>
           <button type="button" className="learning-canvas__toolbar-btn is-zoom-readout" title="缩放（50% / 100% / 800%）" aria-label={`当前缩放 ${Math.round(zoom * 100)}%`} aria-expanded={zoomMenu} onClick={() => setZoomMenu((open) => !open)}>{Math.round(zoom * 100)}%</button>
-          <button type="button" className="learning-canvas__toolbar-btn" title="放大" aria-label="放大" onClick={() => { setZoomMenu(false); zoomIn({ duration: 160 }); }}>＋</button>
+          <button type="button" className="learning-canvas__toolbar-btn" title="放大" aria-label="放大" onClick={() => { setZoomMenu(false); zoomIn({ duration: 160 }); }}><Icon name="plus" size={16} /></button>
           {zoomMenu ? <div className="learning-canvas__zoom-menu" role="menu" onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" role="menuitem" onClick={() => { setZoomMenu(false); zoomIn({ duration: 160 }); }}>放大<span>＋</span></button>
-            <button type="button" role="menuitem" onClick={() => { setZoomMenu(false); zoomOut({ duration: 160 }); }}>缩小<span>−</span></button>
+            <button type="button" role="menuitem" onClick={() => { setZoomMenu(false); zoomIn({ duration: 160 }); }}>放大<Icon name="plus" size={16} /></button>
+            <button type="button" role="menuitem" onClick={() => { setZoomMenu(false); zoomOut({ duration: 160 }); }}>缩小<Icon name="dash" size={16} /></button>
             <button type="button" role="menuitem" onClick={() => { setZoomMenu(false); fitView({ padding: CANVAS_FIT_PADDING, duration: 320, maxZoom: 1.2 }); }}>适合屏幕</button>
             {CANVAS_ZOOM_STEPS.map((step) => <button key={step} type="button" role="menuitem" onClick={() => { setZoomMenu(false); zoomTo(step, { duration: 220 }); }}>缩放至 {Math.round(step * 100)}%</button>)}
           </div> : null}
@@ -1870,12 +1873,12 @@ function CanvasSurface({ initialSnapshot, readOnly, onChange, onGenerateNode, re
       {allowNodeCreation && !readOnly ? <div className="learning-canvas__tip">拖动卡片排布；从卡片两侧的 ＋ 拖一条线连到另一个框体。</div> : null}
       {contextMenu && allowNodeCreation && <div className="learning-canvas__context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>
         <strong>创建节点</strong>
-        <button type="button" onClick={() => addNodeAt('prompt', contextMenu.position)} disabled={!enabledCapabilities.has('text')}>✎ AI 文字</button>
-        <button type="button" onClick={() => addNodeAt('image', contextMenu.position)} disabled={!enabledCapabilities.has('image')}>✦ AI 生图{!enabledCapabilities.has('image') && <small>本课未开放</small>}</button>
-        <button type="button" onClick={() => addNodeAt('video', contextMenu.position)} disabled={!enabledCapabilities.has('video')}>▶ AI 生视频{!enabledCapabilities.has('video') && <small>本课未开放</small>}</button>
-        <button type="button" onClick={() => addNodeAt('audio', contextMenu.position)} disabled={!(enabledCapabilities.has('music'))}>♫ AI 音频{!(enabledCapabilities.has('music')) && <small>本课未开放</small>}</button>
-        <button type="button" onClick={() => addNodeAt('character', contextMenu.position)}>♙ 角色节点</button>
-        <button type="button" onClick={() => addNodeAt('scene', contextMenu.position)}>⌂ 场景节点</button>
+        <button type="button" onClick={() => addNodeAt('prompt', contextMenu.position)} disabled={!enabledCapabilities.has('text')}><Icon name="text" /> AI 文字</button>
+        <button type="button" onClick={() => addNodeAt('image', contextMenu.position)} disabled={!enabledCapabilities.has('image')}><Icon name="image" /> AI 生图{!enabledCapabilities.has('image') && <small>本课未开放</small>}</button>
+        <button type="button" onClick={() => addNodeAt('video', contextMenu.position)} disabled={!enabledCapabilities.has('video')}><Icon name="video" /> AI 生视频{!enabledCapabilities.has('video') && <small>本课未开放</small>}</button>
+        <button type="button" onClick={() => addNodeAt('audio', contextMenu.position)} disabled={!(enabledCapabilities.has('music'))}><Icon name="music" /> AI 音频{!(enabledCapabilities.has('music')) && <small>本课未开放</small>}</button>
+        <button type="button" onClick={() => addNodeAt('character', contextMenu.position)}><Icon name="user" /> 角色节点</button>
+        <button type="button" onClick={() => addNodeAt('scene', contextMenu.position)}><Icon name="home" /> 场景节点</button>
       </div>}
     </div>
   </CanvasActionsContext.Provider></AssetUrlContext.Provider>;

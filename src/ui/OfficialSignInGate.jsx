@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { loadLearningAccount } from '../services/learningAccount.js';
 import logo from '../assets/login/kx-class.webp';
+import LoginMedia from './LoginMedia.jsx';
+import { ArrowLeft } from './icons.jsx';
 import './login.css';
 
 export default function OfficialSignInGate({ onSignedIn }) {
@@ -31,13 +33,13 @@ export default function OfficialSignInGate({ onSignedIn }) {
         setStage('retry');
       }
     }
-    window.kuaixueDesktop?.setTheme?.('dark');
+    window.kuaixueDesktop?.setTheme?.('light');
     setMessage('正在打开登录页…'); setStage('loading'); void start();
     return () => { current = false; controller.abort(); };
   }, [attempt, onSignedIn]);
   return <main className="kx-login"><div className="kx-drag" />
-    {stage === 'signing' && <button className="kx-back" type="button" onClick={() => window.kuaixueDesktop.cancelLogin()}>← 返回</button>}
-    <div className="kx-login-page"><div className="kx-column"><img className="kx-logo" src={logo} alt="KX CLASS" /><h1>登录 KX CLASS</h1>
+    {stage === 'signing' && <button className="kx-back" type="button" onClick={() => window.kuaixueDesktop.cancelLogin()}><ArrowLeft size={15} />返回</button>}
+    <div className="kx-login-page"><LoginMedia /><div className="kx-column"><img className="kx-logo" src={logo} alt="KX CLASS" /><h1>登录 KX CLASS</h1>
       <p className="kx-status" role="status">{message}</p>
       {stage === 'retry' && <button className="kx-submit" onClick={() => setAttempt(value => value + 1)}>重新登录</button>}
     </div><footer>© 2026 KX CLASS</footer></div></main>;

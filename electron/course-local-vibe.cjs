@@ -190,7 +190,7 @@ function withRuntimeTools(env,resourceRoot){
   };
 }
 
-async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
+async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot,browserHost}) {
   if(run?.mode!=='VIBECODING') throw Error('本机运行只支持 VibeCoding');
   const context={userId,courseId:run.course.id,versionId:run.course.versionId,runId:run.id,mode:'VIBECODING'};
   const [{createRuntimeBroker},{createScopedSocketAcceptor},{provisionCourseProvider},{servePreview}]=await Promise.all([
@@ -214,7 +214,7 @@ async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
   catch(error){if(error.code!=='EEXIST')throw error;}
 
   const token=randomBytes(32).toString('base64url');
-  let child,profile,closed=false,lease=randomBytes(16).toString('hex');
+  let iab,child,profile,closed=false,lease=randomBytes(16).toString('hex');
   const previewRoots=new Map();
   const profiles=path.join(dataDirectory,'vibe-profiles');
   const web=createServer();
@@ -239,6 +239,7 @@ async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
   function close() {
     if(closed)return;
     closed=true;
+    iab?.close();
     for(const socket of connections)socket.destroy();
     web.close();
     if(child&&child.exitCode===null&&!child.signalCode)child.kill();
@@ -320,8 +321,21 @@ async function openCourseLocalVibe({run,gateway,userId,resourceRoot,dataRoot}) {
       ...(fs.existsSync(runtimeHost)?{ZCODE_RUNTIME_HOST_PATH:runtimeHost,ZCODE_SERVER_RUNTIME_ROOT:runtimeDir}:{}),
       ELECTRON_RUN_AS_NODE:'1',ZCODE_SERVER_AUTH_TOKEN:token,PORT:String(runtimePort),
     },resourceRoot);
+    if(browserHost){
+      const {executeBrowserCommandOnView}=await import(require('node:url').pathToFileURL(path.join(runtimeDir,'course-iab-executor.mjs')).href);
+      iab=require('./course-iab.cjs').createCourseIab({host:browserHost,lease,executePage:executeBrowserCommandOnView});
+      childEnv.KUAIXUE_IAB_ID=iab.id;
+    }
+    const stdio=process.env.KUAIXUE_QA_RUNTIME==='1'?['ignore','inherit','inherit']:['ignore','ignore','ignore'];
+    if(iab)stdio.push('ipc');
     child=spawn(process.execPath,[path.join(runtimeDir,'course-runtime.mjs')],{
-      cwd:workspace,env:childEnv,stdio:process.env.KUAIXUE_QA_RUNTIME==='1'?['ignore','inherit','inherit']:'ignore',windowsHide:true,
+      cwd:workspace,env:childEnv,stdio,windowsHide:true,
+    });
+    if(iab)child.on('message',async message=>{
+      if(closed || message?.type!=='course-iab-command')return;
+      let result;
+      try {result=await iab.execute(message.input);} catch(error){result={ok:false,elapsedMs:0,error:{code:'execution_error',message:error.message}};}
+      if(child.connected)child.send({type:'course-iab-result',key:message.key,result},()=>{});
     });
     child.once('error',error=>{console.error('[course-vibe] runtime spawn failed',error);close();});
     child.once('close',(code,signal)=>{

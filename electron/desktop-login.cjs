@@ -30,9 +30,9 @@ async function desktopLogin(parent,config) {
   const {WebContentsView,shell} = require('electron');
   const flow = begin(config);
   const view = new WebContentsView({webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,
-    partition:'kuaixue-official-account',devTools:false}});
+    partition:'kuaixue-official-account',devTools:false,autoplayPolicy:'no-user-gesture-required'}});
   const contents = view.webContents;
-  require('./account-typography.cjs').applyAccountTypography(contents,flow.authorize.origin);
+  const accountStyled = require('./account-typography.cjs').applyAccountTypography(contents,flow.authorize.origin);
   const owner = parent.webContents;
   const controller = new AbortController();
   const {promise, resolve, reject} = Promise.withResolvers();
@@ -75,6 +75,7 @@ async function desktopLogin(parent,config) {
         if (contents.getURL() !== signIn || !await contents.executeJavaScript(`document.querySelector('meta[name="kx-sign-in"]')?.content === '1'`)) {
           reject(Error('主站尚未提供新版快学登录页')); return;
         }
+        await accountStyled();
         if (!shown && !controller.signal.aborted && !contents.isDestroyed()) {
           parent.contentView.addChildView(view); shown = true; resize(); contents.focus();
         }

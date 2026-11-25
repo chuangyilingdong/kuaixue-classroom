@@ -24,6 +24,8 @@ export const courseServiceFiles = [
   'integrations/vibecoding/runtime-broker.mjs',
   'shared/course-asset-url.mjs',
   'shared/local-snapshot.mjs',
+  'shared/catalog-categories.mjs',
+  'shared/work-preview.mjs',
   'src/data/account.js',
   'src/data/courses.js',
 ];

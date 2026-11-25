@@ -6,11 +6,11 @@ import {
   Coins,
   Expand,
   X,
-} from "lucide-react";
+} from "./icons.jsx";
 import { grantForCourse } from "../data/account.js";
 import { courseClient } from "../services/courseClient.js";
 import { localWorkshop } from "../services/learningAccount.js";
-import { catalogBaseUrl, loadCourseDetail } from "../services/courseCatalog.js";
+import { loadCourseDetail } from "../services/courseCatalog.js";
 import { Favorite, Media, purchases, typeName } from "./CourseParts.jsx";
 
 function Gallery({ images, title }) {
@@ -151,14 +151,16 @@ export default function CourseDetail({ course, close, saved, toggle, entitlement
     : item.thumbnailUrl
       ? [{ url: item.thumbnailUrl, alt: item.title }]
       : [];
+  const unavailableValues = new Set(["其他", "未分级", "时长待定", "暂无统计", "详见课程介绍"]);
+  const hasValue = (value) => value != null && String(value).trim() !== "" && !unavailableValues.has(String(value).trim());
   const rows = [
     ["课程分类", item.category],
     ["课程类型", typeName(item)],
     ["课程难度", item.level],
     ["购买次数", purchases(item)],
-  ];
-  if (detail)
-    rows.push(["课程步骤", `${detail.steps.length} 步`]);
+  ].filter(([, value]) => hasValue(value));
+  const deliverable = detail?.steps.at(-1)?.deliverable;
+  const outcomeFacts = [item.duration, item.level].filter(hasValue);
   return (
     <section className="detail-view" aria-labelledby="course-title">
       <button
@@ -176,7 +178,7 @@ export default function CourseDetail({ course, close, saved, toggle, entitlement
             <Media src={item.thumbnailUrl} />
             <div>
               <h1 id="course-title">{item.title}</h1>
-              <p>{item.subtitle}</p>
+              {item.subtitle && <p>{item.subtitle}</p>}
             </div>
           </header>
           <figure className="work-preview">
@@ -189,7 +191,7 @@ export default function CourseDetail({ course, close, saved, toggle, entitlement
             </header>
             <div className="description-body">
               <h2>{item.title}</h2>
-              <p>{item.subtitle || "暂无课程简介"}</p>
+              {item.subtitle && <p>{item.subtitle}</p>}
               {state.loading && <p role="status">正在读取课程详情</p>}
               {state.error && (
                 <div className="feedback" role="alert">
@@ -231,16 +233,18 @@ export default function CourseDetail({ course, close, saved, toggle, entitlement
                       )}
                     </>
                   )}
-                  <h3>课程步骤</h3>
-                  <ol className="steps">
-                    {detail.steps.map((step) => (
-                      <li key={step.id}>
-                        <b>{step.title}</b>
-                        <p>{step.description}</p>
-                        <small>阶段成果 · {step.deliverable}</small>
-                      </li>
-                    ))}
-                  </ol>
+                  {detail.steps.length > 0 && <>
+                    <h3>课程步骤</h3>
+                    <ol className="steps">
+                      {detail.steps.map((step) => (
+                        <li key={step.id}>
+                          <b>{step.title}</b>
+                          <p>{step.description}</p>
+                          <small>阶段成果 · {step.deliverable}</small>
+                        </li>
+                      ))}
+                    </ol>
+                  </>}
                 </>
               )}
             </div>
@@ -248,11 +252,10 @@ export default function CourseDetail({ course, close, saved, toggle, entitlement
         </div>
         <aside className="detail-side" aria-label="课程信息与操作">
           <div className="side-panel buy-panel">
-            <div className="outcome">
-              <small>本课交付作品</small>
-              <h2>{detail?.steps.at(-1)?.deliverable || (state.loading ? "读取中…" : "详见课程介绍")}</h2>
-              <span>{item.duration} · {item.level}</span>
-            </div>
+            {(hasValue(deliverable) || outcomeFacts.length > 0) && <div className="outcome">
+              {hasValue(deliverable) && <><small>本课交付作品</small><h2>{deliverable}</h2></>}
+              {outcomeFacts.length > 0 && <span>{outcomeFacts.join(" · ")}</span>}
+            </div>}
             <div className="preview-price"><Coins size={18} /><b>{item.price}</b> 积分</div>
             {courseClient && detail && demoAccount !== undefined ? <>
               {grant?.status === 'active' ? <div className="workspace-entries" aria-label="已解锁工作区">
@@ -277,7 +280,7 @@ export default function CourseDetail({ course, close, saved, toggle, entitlement
             />
             <small>课程解锁与 AI 创作消耗分开结算</small>
           </div>
-          <section className="side-panel">
+          {rows.length > 0 && <section className="side-panel">
             <h2>课程资料</h2>
             <dl>
               {rows.map(([k, v]) => (
@@ -287,16 +290,8 @@ export default function CourseDetail({ course, close, saved, toggle, entitlement
                 </div>
               ))}
             </dl>
-            {detail && <details className="course-version">
-              <summary>版本信息</summary>
-              <dl>
-                <div><dt>数据来源</dt><dd>{catalogBaseUrl ? "课程服务" : "本机演示"}</dd></div>
-                <div><dt>课程 ID</dt><dd>{detail.id}</dd></div>
-                <div><dt>版本号</dt><dd>{detail.versionId}</dd></div>
-              </dl>
-            </details>}
-          </section>
-          <section className="side-panel capabilities">
+          </section>}
+          {item.models.length > 0 && <section className="side-panel capabilities">
             <h2>创作能力</h2>
             <div>
               {item.models.map((m) => (
@@ -304,7 +299,7 @@ export default function CourseDetail({ course, close, saved, toggle, entitlement
               ))}
             </div>
             <p>模型与创作消耗以服务端报价为准。</p>
-          </section>
+          </section>}
         </aside>
       </div>
     </section>

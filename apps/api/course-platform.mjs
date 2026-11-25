@@ -4,6 +4,8 @@ import {createHash,randomUUID} from 'node:crypto';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import versioning from '../../electron/course-version.cjs';
+import { defaultCatalogCategories, validateCatalogCategories } from '../../shared/catalog-categories.mjs';
+import { readSnapshotPreview } from '../../shared/work-preview.mjs';
 
 export class CourseProblem extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -29,6 +31,7 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
     CREATE TABLE IF NOT EXISTS kx_runs (id TEXT PRIMARY KEY, user TEXT NOT NULL, version TEXT NOT NULL,
       revision INTEGER NOT NULL, completed TEXT NOT NULL, canvas TEXT, UNIQUE(user,version));
     CREATE TABLE IF NOT EXISTS kx_workspaces_saved (run TEXT NOT NULL, mode TEXT NOT NULL, PRIMARY KEY(run,mode));
+    CREATE TABLE IF NOT EXISTS kx_catalog_settings (id INTEGER PRIMARY KEY, revision INTEGER NOT NULL, body TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS kx_generation (id TEXT PRIMARY KEY, run TEXT NOT NULL, node TEXT NOT NULL, user TEXT NOT NULL,
       input TEXT NOT NULL, quote TEXT NOT NULL, status TEXT NOT NULL, result TEXT, provider_task TEXT);
     CREATE TABLE IF NOT EXISTS kx_assets (id TEXT PRIMARY KEY, user TEXT NOT NULL, run TEXT NOT NULL,
@@ -47,6 +50,22 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
   function catalog(includeHidden = false) {
     return db.prepare(`SELECT body,visible FROM kx_listings JOIN kx_versions USING(version) ${includeHidden ? '' : 'WHERE visible=1'} ORDER BY kx_listings.rowid`).all()
       .map(row => ({...JSON.parse(row.body), visible:Boolean(row.visible)}));
+  }
+  function catalogCategories() {
+    const row = db.prepare('SELECT revision,body FROM kx_catalog_settings WHERE id=1').get();
+    return row ? { revision: row.revision, items: JSON.parse(row.body) }
+      : { revision: 0, items: defaultCatalogCategories.map(item => ({ ...item })) };
+  }
+  function saveCatalogCategories(actor, { revision, items }) {
+    let categories;
+    try { categories = validateCatalogCategories(items); }
+    catch (error) { reject(400, error.message); }
+    return transaction(() => {
+      if (catalogCategories().revision !== revision) reject(409, '课程分类已更新，请刷新后重试');
+      db.prepare('INSERT OR REPLACE INTO kx_catalog_settings VALUES(1,?,?)').run(revision + 1, JSON.stringify(categories));
+      db.prepare('INSERT INTO kx_audit(actor,action,version) VALUES(?,?,?)').run(actor, 'categories', String(revision + 1));
+      return catalogCategories();
+    });
   }
   function lookup(courseId,versionId) {
     const row = db.prepare('SELECT body FROM kx_versions WHERE course=? AND version=?').get(courseId, versionId);
@@ -79,8 +98,13 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
     return db.prepare(`SELECT user userId, course courseId, version versionId, CASE WHEN status='confirmed' THEN 'active' ELSE 'revoked' END status
       FROM kx_orders JOIN kx_versions USING(version) WHERE user=? AND status IN ('confirmed','revoked')`).all(user);
   }
+  function entitledCourse(user,courseId) {
+    return Boolean(db.prepare(`SELECT kx_orders.id FROM kx_orders JOIN kx_versions USING(version)
+      WHERE kx_orders.user=? AND kx_versions.course=? AND kx_orders.status='confirmed' LIMIT 1`).get(user,courseId));
+  }
   function entitled(user,version) {
-    return Boolean(db.prepare("SELECT id FROM kx_orders WHERE user=? AND version=? AND status='confirmed'").get(user,version));
+    const row = db.prepare('SELECT course FROM kx_versions WHERE version=?').get(version);
+    return Boolean(row && entitledCourse(user,row.course));
   }
   function detail(courseId,versionId,user) {
     const listing = db.prepare('SELECT version,visible FROM kx_listings WHERE course=?').get(courseId);
@@ -92,6 +116,9 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
     const course = lookup(courseId,versionId);
     const order = transaction(() => {
       const existing = db.prepare('SELECT * FROM kx_orders WHERE user=? AND version=?').get(user,versionId);
+      if (entitledCourse(user,courseId)) return existing?.status === 'confirmed'
+        ? existing
+        : {id:null,status:'confirmed',price:0,inherited:true};
       if (existing?.status === 'revoked') reject(403,'课程权益已撤销');
       if (existing) return existing;
       if (!db.prepare('SELECT course FROM kx_listings WHERE version=? AND visible=1').get(versionId)) reject(409,'此版本已更新或下架');
@@ -109,7 +136,7 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
       db.prepare("UPDATE kx_orders SET status='confirmed',receipt=? WHERE id=? AND status='pending'").run(receipt.transactionId,order.id);
     }
     if (!entitled(user,versionId)) reject(403,'课程权益已撤销');
-    return {orderId:order.id,courseId,versionId,status:'confirmed'};
+    return {orderId:order.id,courseId,versionId,status:'confirmed',...(order.inherited?{inherited:true}:{})};
   }
   function checkMode(user,course,mode) {
     if (!entitled(user,course.versionId) || !course.permittedDeliveryModes.includes(mode)) reject(403,'未获得此工作区的权益');
@@ -143,16 +170,31 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
     });
   }
   function works(user) {
-    const rows=db.prepare(`SELECT course courseId, version versionId, body, completed, mode FROM kx_runs
+    const rows=db.prepare(`SELECT kx_runs.id, course courseId, version versionId, body, completed, mode FROM kx_runs
       JOIN kx_versions USING(version) JOIN kx_workspaces_saved ON kx_runs.id=kx_workspaces_saved.run
-      JOIN kx_orders USING(version,user) WHERE user=? AND kx_orders.status='confirmed' ORDER BY kx_runs.rowid DESC`).all(user);
+      WHERE kx_runs.user=? AND EXISTS (
+        SELECT 1 FROM kx_orders JOIN kx_versions entitled_version ON entitled_version.version=kx_orders.version
+        WHERE kx_orders.user=kx_runs.user AND kx_orders.status='confirmed'
+          AND entitled_version.course=kx_versions.course
+      ) ORDER BY kx_runs.rowid DESC`).all(user);
     const latest=new Map();
     for(const row of rows)if(!latest.has(`${row.courseId}:${row.mode}`))latest.set(`${row.courseId}:${row.mode}`,row);
     return [...latest.values()]
       .map(row => {
         const course = JSON.parse(row.body);
-        return {courseId:row.courseId, versionId:row.versionId, title:course.title, mode:row.mode, completed:JSON.parse(row.completed).length, total:course.steps.length};
+        return {id:row.id, courseId:row.courseId, versionId:row.versionId, title:course.title,
+          thumbnailUrl:course.thumbnailUrl || null, mode:row.mode, completed:JSON.parse(row.completed).length, total:course.steps.length};
       });
+  }
+  async function workPreview(user, { courseId, versionId, mode }) {
+    const course = lookup(courseId, versionId);
+    checkMode(user, course, mode);
+    const row = db.prepare(`SELECT kx_runs.id,canvas FROM kx_runs JOIN kx_workspaces_saved ON kx_runs.id=kx_workspaces_saved.run
+      WHERE user=? AND version=? AND mode=?`).get(user, versionId, mode);
+    if (!row) reject(404, '找不到已保存的作品');
+    if (mode === 'CANVAS') return { mode, work: row.canvas ? JSON.parse(row.canvas) : { nodes: [], edges: [] } };
+    const snapshot = await downloadLocalSnapshotRecord(user, { runId: row.id });
+    return { mode, files: await readSnapshotPreview(snapshot.bytes) };
   }
   function generationContext(user,runId) {
     const row = db.prepare('SELECT body FROM kx_runs JOIN kx_versions USING(version) WHERE id=? AND user=?').get(runId,user);
@@ -355,13 +397,13 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
   }
   function hasRuntimeAccess({userId,runId,versionId,courseId,mode}) {
     const row = db.prepare('SELECT body FROM kx_runs JOIN kx_versions USING(version) WHERE id=? AND user=? AND version=? AND course=?').get(runId,userId,versionId,courseId);
-    return Boolean(row && entitled(userId,versionId) && JSON.parse(row.body).permittedDeliveryModes.includes(mode));
+    return Boolean(row && entitledCourse(userId,courseId) && JSON.parse(row.body).permittedDeliveryModes.includes(mode));
   }
   // Call only after the main site's authenticated refund/reconciliation handler verifies its receipt.
   function revoke(orderId,transactionId) {
     return db.prepare("UPDATE kx_orders SET status='revoked' WHERE id=? AND receipt=? AND status='confirmed'").run(orderId,transactionId).changes;
   }
-  return {catalog,detail,publish,hide,listGrants,purchase,start,save,works,quote,generate,generationState,uploadAsset,asset,assetById,
+  return {catalog,catalogCategories,saveCatalogCategories,detail,publish,hide,listGrants,purchase,start,save,works,workPreview,quote,generate,generationState,uploadAsset,asset,assetById,
     localRuntime,uploadLocalSnapshot:uploadLocalSnapshotRecord,downloadLocalSnapshot:downloadLocalSnapshotRecord,
     revoke,hasRuntimeAccess,close:()=>db.close()};
 }

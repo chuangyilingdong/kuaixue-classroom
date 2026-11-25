@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { grantForCourse } from '../src/data/account.js';
+import { grantForCourse, parseGrantList } from '../src/data/account.js';
 import { createApiServer } from '../apps/api/server.mjs';
 import { createAccountReader } from '../apps/api/account.mjs';
 import { loadLearningAccount } from '../src/services/learningAccount.js';
@@ -35,6 +35,11 @@ test('authenticated adapter reads authoritative zero balance, active and revoked
   assert.deepEqual(account.entitlements.map(g=>g.status),['active','revoked']);
   assert.deepEqual((await (await fetchImpl(base+'/api/v1/me/entitlements?userId=other')).json()).data.entitlements,account.entitlements);
 });
+test('account adapter preserves an avatarUrl field from the main-site profile', async () => {
+  const account = await reader({profile:{id:'u1',username:'测试学员',avatarUrl:'https://cdn.example/avatar-url.png'}})('valid');
+  assert.equal(account.user.avatarUrl,'https://cdn.example/avatar-url.png');
+});
+
 test('account endpoint rejects missing sessions, expired sessions and a disallowed browser origin', async t => {
   const url=(await serve(t,reader()))+'/api/v1/me';
   for(const [headers,status] of [[{},401],[{Cookie:'kuaixue_session=no'},401],[{Cookie:'kuaixue_session=valid',Origin:'https://other.invalid'},403]]) assert.equal((await fetch(url,{headers})).status,status);
@@ -58,8 +63,23 @@ test('a wallet outage preserves only verified course versions in the learning vi
   assert.equal(account.demo, false);
   assert.equal(account.points, null);
   assert.equal(grantForCourse(account.entitlements, {id: grant.courseId, versionId: grant.versionId}).status, 'active');
-  assert.equal(grantForCourse(account.entitlements, {id: grant.courseId, versionId: 'new-publication'}), undefined);
+  assert.deepEqual(grantForCourse(account.entitlements, {id: grant.courseId, versionId: 'new-publication'}), {
+    courseId:grant.courseId, versionId:'new-publication', status:'active', inherited:true,
+  });
+  assert.deepEqual(grantForCourse(account.entitlements, {id:'another-course', versionId:'new-publication'}), undefined);
   assert.equal(reads.filter(path => path.endsWith('/wallet')).length, 1);
+});
+
+test('撤销当前版本订单不覆盖同课程其他有效历史购买', () => {
+  const entitlements = parseGrantList([
+    { ...grant, versionId:'new-publication', status:'revoked' },
+    { ...grant, versionId:'original-purchase', status:'active' },
+  ]);
+  assert.deepEqual(grantForCourse(entitlements, {
+    id:grant.courseId, versionId:'new-publication',
+  }), {
+    courseId:grant.courseId, versionId:'new-publication', status:'active', inherited:true,
+  });
 });
 
 test('entitlements-only requests still validate session, owner and conflicting grants', async t => {

@@ -116,9 +116,20 @@ function createWorkshop(filename) {
       const course = JSON.parse(row.body);
       const saved = readRunState(row,course);
       return course.permittedDeliveryModes.filter(mode => saved.works[mode] != null).map(mode => ({
-        courseId:course.id,versionId:course.versionId,title:course.title,mode,completed:saved.completed.length,total:course.steps.length,
+        id:row.id,courseId:course.id,versionId:course.versionId,title:course.title,thumbnailUrl:course.thumbnailUrl || null,
+        mode,completed:saved.completed.length,total:course.steps.length,
       }));
     });
+  }
+  function workPreview({courseId,versionId,mode}) {
+    const row = db.prepare(`SELECT body,state FROM runs JOIN purchases USING(version) JOIN versions USING(version)
+      WHERE versions.course=? AND version=? AND revision>0`).get(courseId,versionId);
+    if (!row) throw new Error('找不到已保存的作品');
+    const course = JSON.parse(row.body);
+    selectedMode(course,mode);
+    const work = readRunState(row,course).works[mode];
+    if (work == null) throw new Error('找不到已保存的作品');
+    return mode === 'CANVAS' ? {mode,work} : {mode,html:work};
   }
   function projectFile(id) {
     const row = db.prepare('SELECT runs.id, revision, state, body FROM runs JOIN versions USING(version) JOIN purchases USING(version) WHERE runs.id=?').get(id);
@@ -132,6 +143,6 @@ function createWorkshop(filename) {
   function hide(id,version) {
     if (!db.prepare('UPDATE listings SET visible=0 WHERE course=? AND version=? AND visible=1').run(id,version).changes) throw new Error('课程状态已变更，请刷新');
   }
-  return {catalog,detail,publish,hide,account,purchase,start,save,works,projectFile,close:()=>db.close()};
+  return {catalog,detail,publish,hide,account,purchase,start,save,works,workPreview,projectFile,close:()=>db.close()};
 }
 module.exports = {createWorkshop};

@@ -7,7 +7,7 @@ import {
   Coins,
   Play,
   Users,
-} from "lucide-react";
+} from "./icons.jsx";
 import {
   CatalogState,
   Favorite,
@@ -121,8 +121,10 @@ export default function Home({
                       <span className="poster-frame">
                         <Media src={item.thumbnailUrl} position={item.coverPosition} />
                       </span>
-                      <strong>{item.title}</strong>
-                      <small>{item.category}</small>
+                      <span className="poster-copy">
+                        <strong>{item.title}</strong>
+                        <small>{item.category}</small>
+                      </span>
                     </button>
                   ))}
                 </div>

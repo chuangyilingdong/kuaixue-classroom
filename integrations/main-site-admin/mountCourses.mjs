@@ -34,6 +34,17 @@ export function mountKuaixueCourses(
     action(() => platform.catalog(true)),
   );
   router.get(
+    base + '/categories',
+    requirePermission('kuaixue.read'),
+    action(() => platform.catalogCategories()),
+  );
+  router.post(
+    base + '/categories',
+    requirePermission('kuaixue.publish'),
+    requireCsrf,
+    action((actor, config) => platform.saveCatalogCategories(actor, config)),
+  );
+  router.get(
     base + '/models',
     requirePermission('kuaixue.read'),
     action(async (actor) => modelDirectory(await listCanvasModels(actor))),

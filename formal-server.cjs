@@ -51,11 +51,13 @@ async function main() {
     identity: provider.identity,
     listGrants: platform.listGrants,
     mainSite: process.env.KUAIXUE_INTERNAL_ORIGIN || process.env.KUAIXUE_MAIN_SITE_ORIGIN || 'http://127.0.0.1:3001',
+    publicMainSite: publicOrigin,
   });
   const assetSigningSecret = process.env.KUAIXUE_ASSET_SIGNING_SECRET ||
     process.env.KUAIXUE_INTERNAL_SECRET || process.env.KUAIXUE_CANVAS_BILLING_SECRET || '';
   const catalog = createApiServer({
     platform, accountReader, identity: provider.identity, desktopAuth: provider.desktopAuth,
+    internalAccessSecret: process.env.KUAIXUE_INTERNAL_SECRET || process.env.KUAIXUE_WALLET_SECRET || '',
     allowedOrigins, assetSigningSecret,
   });
 

@@ -1,0 +1,70 @@
+import ArrowLeftIcon from '@icon-park/react/es/icons/ArrowLeft';
+import ArrowRightIcon from '@icon-park/react/es/icons/ArrowRight';
+import BookIcon from '@icon-park/react/es/icons/BookOpen';
+import LeftIcon from '@icon-park/react/es/icons/Left';
+import RightIcon from '@icon-park/react/es/icons/Right';
+import TimeIcon from '@icon-park/react/es/icons/Time';
+import CodeIcon from '@icon-park/react/es/icons/Code';
+import CurrencyIcon from '@icon-park/react/es/icons/Funds';
+import CompassIcon from '@icon-park/react/es/icons/CompassOne';
+import LinkIcon from '@icon-park/react/es/icons/LinkOut';
+import ExpandIcon from '@icon-park/react/es/icons/FullScreen';
+import EyeIcon from '@icon-park/react/es/icons/PreviewOpen';
+import EyeOffIcon from '@icon-park/react/es/icons/PreviewClose';
+import GlobeIcon from '@icon-park/react/es/icons/Globe';
+import GridIcon from '@icon-park/react/es/icons/AllApplication';
+import HeartIcon from '@icon-park/react/es/icons/Like';
+import PictureIcon from '@icon-park/react/es/icons/Picture';
+import LayersIcon from '@icon-park/react/es/icons/Layers';
+import LogoutIcon from '@icon-park/react/es/icons/Logout';
+import MoonIcon from '@icon-park/react/es/icons/Moon';
+import PlayIcon from '@icon-park/react/es/icons/PlayOne';
+import PlusIcon from '@icon-park/react/es/icons/Plus';
+import RefreshIcon from '@icon-park/react/es/icons/Refresh';
+import ScanIcon from '@icon-park/react/es/icons/ScanCode';
+import SearchIcon from '@icon-park/react/es/icons/Search';
+import SettingsIcon from '@icon-park/react/es/icons/SettingConfig';
+import SunIcon from '@icon-park/react/es/icons/SunOne';
+import UserIcon from '@icon-park/react/es/icons/User';
+import UsersIcon from '@icon-park/react/es/icons/Peoples';
+import CloseIcon from '@icon-park/react/es/icons/Close';
+import '@icon-park/react/styles/index.css';
+
+function appIcon(Component) {
+  return function AppIcon({ size = 24, strokeWidth = 1.8, fill, ...props }) {
+    return <Component size={size} strokeWidth={strokeWidth * 2} fill="currentColor"
+      theme={fill && fill !== 'none' ? 'filled' : 'outline'} aria-hidden="true" {...props} />;
+  };
+}
+
+export const ArrowLeft = appIcon(ArrowLeftIcon);
+export const ArrowRight = appIcon(ArrowRightIcon);
+export const BookOpen = appIcon(BookIcon);
+export const ChevronLeft = appIcon(LeftIcon);
+export const ChevronRight = appIcon(RightIcon);
+export const Clock3 = appIcon(TimeIcon);
+export const Code2 = appIcon(CodeIcon);
+export const Coins = appIcon(CurrencyIcon);
+export const Compass = appIcon(CompassIcon);
+export const ExternalLink = appIcon(LinkIcon);
+export const Expand = appIcon(ExpandIcon);
+export const Eye = appIcon(EyeIcon);
+export const EyeOff = appIcon(EyeOffIcon);
+export const Globe2 = appIcon(GlobeIcon);
+export const Grid2X2 = appIcon(GridIcon);
+export const Heart = appIcon(HeartIcon);
+export const ImageOff = appIcon(PictureIcon);
+export const Layers3 = appIcon(LayersIcon);
+export const LogOut = appIcon(LogoutIcon);
+export const Moon = appIcon(MoonIcon);
+export const Play = appIcon(PlayIcon);
+export const Plus = appIcon(PlusIcon);
+export const RefreshCw = appIcon(RefreshIcon);
+export const RotateCw = appIcon(RefreshIcon);
+export const ScanLine = appIcon(ScanIcon);
+export const Search = appIcon(SearchIcon);
+export const Settings2 = appIcon(SettingsIcon);
+export const Sun = appIcon(SunIcon);
+export const UserRound = appIcon(UserIcon);
+export const Users = appIcon(UsersIcon);
+export const X = appIcon(CloseIcon);

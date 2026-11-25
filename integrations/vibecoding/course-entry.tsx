@@ -49,6 +49,22 @@ function chooseClassroomPaths(kind: 'directory' | 'file', multiple = false): Pro
   });
 }
 
+function openCourseBrowser(url = '', mode: 'toggle' | 'new-tab' = 'toggle') {
+  const value = typeof url === 'string' ? url.trim() : '';
+  const safe = !value || /^https?:\/\//i.test(value);
+  window.parent.postMessage({
+    type:'kuaixue-open-browser',
+    mode:value ? 'url' : mode,
+    url:safe ? value : '',
+    ...(safe ? {} : {error:'课程浏览器只支持 HTTP/HTTPS 网页'}),
+  }, '*');
+  return true;
+}
+
+(globalThis as typeof globalThis & {
+  __kuaixueOpenBrowser?: (url?: string, mode?: 'toggle' | 'new-tab') => boolean;
+}).__kuaixueOpenBrowser = openCourseBrowser;
+
 function normalizeCourseUsage(limitValue: unknown, usedValue: unknown): CourseUsage | null {
   const limit = Number(limitValue);
   const used = Number(usedValue);

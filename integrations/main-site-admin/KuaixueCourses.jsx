@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { CanvasRecipe, VibeRecipe } from './WorkspaceRecipe.jsx';
 import './courses.css';
+import { defaultCatalogCategories } from '../../shared/catalog-categories.mjs';
 
 const names = { CANVAS: '学院画布', VIBECODING: '灵动 VibeCoding' };
-const empty = () => ({ title: '', subtitle: '', price: 0, permittedDeliveryModes: ['CANVAS'], steps: [] });
+const empty = () => ({ title: '', subtitle: '', category: '创作实训', price: 0, permittedDeliveryModes: ['CANVAS'], steps: [] });
 const draftFor = (course) => ({
   ...course,
   baseVersion: course.versionId,
@@ -60,7 +61,7 @@ function Review({ draft }) {
     </>
   );
 }
-function CourseInfo({ draft, field }) {
+function CourseInfo({ draft, field, categories }) {
   function updateStep(index, patch) {
     field(
       'steps',
@@ -87,6 +88,14 @@ function CourseInfo({ draft, field }) {
           value={draft.subtitle}
           onChange={(e) => field('subtitle', e.target.value)}
         />
+      </label>
+      <label>
+        课程归属
+        <input maxLength={80} list="kx-course-categories" value={draft.category || ''}
+          onChange={event => field('category', event.target.value)} />
+        <datalist id="kx-course-categories">
+          {categories.filter(item => item.category).map(item => <option key={item.id} value={item.category} />)}
+        </datalist>
       </label>
       <label>
         课程解锁价（积分）
@@ -183,12 +192,19 @@ export default function KuaixueCourses({ api }) {
     [busy, setBusy] = useState(false);
   const form = useRef(null),
     pending = useRef(false);
+  const [categoryConfig, setCategoryConfig] = useState({ revision: 0, items: defaultCatalogCategories });
+  const [categoryError, setCategoryError] = useState('');
+  const [categoriesLoaded, setCategoriesLoaded] = useState(false);
   useEffect(() => {
     let live = true;
     api
       .catalog()
       .then((list) => live && setCatalog(list))
       .catch((e) => live && setMessage(e.message));
+    Promise.resolve()
+      .then(() => api.categories())
+      .then(config => { if (live) { setCategoryConfig(config); setCategoriesLoaded(true); } })
+      .catch(error => { if (live) setCategoryError(error.message); });
     Promise.resolve()
       .then(() => api.models?.())
       .then((list) => live && setModels(Array.isArray(list) ? list : []))
@@ -205,6 +221,22 @@ export default function KuaixueCourses({ api }) {
     setDraft(course ? draftFor(course) : empty());
     setPage('info');
     setMessage('');
+  }
+  function editCategory(index, patch) {
+    setCategoryConfig(config => ({ ...config, items: config.items.map((item, position) => position === index ? { ...item, ...patch } : item) }));
+    setCategoryError('');
+  }
+  async function saveCategories(event) {
+    event.preventDefault();
+    if (pending.current) return;
+    pending.current = true;
+    setBusy(true);
+    setCategoryError('');
+    try {
+      setCategoryConfig(await api.saveCategories(categoryConfig));
+      setCategoryError('分类已保存');
+    } catch (error) { setCategoryError(error.message); }
+    finally { pending.current = false; setBusy(false); }
   }
   const pages = [
     ['info', '课程信息'],
@@ -255,6 +287,44 @@ export default function KuaixueCourses({ api }) {
         <small>创易灵动 / 快学课堂</small>
         <h1>课程管理</h1>
       </header>
+      <details className="kx-category-settings">
+        <summary>课程库分类</summary>
+        <form onSubmit={saveCategories}>
+          <fieldset disabled={busy || !categoriesLoaded}>
+            {categoryConfig.items.map((item, index) => <div className="kx-category-row" key={item.id}>
+              <label>分类名称<input required maxLength={40} value={item.label}
+                onChange={event => editCategory(index, { label: event.target.value })} /></label>
+              <label>课程范围<select value={item.mode || 'CATEGORY'} onChange={event => editCategory(index, {
+                mode: event.target.value === 'CATEGORY' ? undefined : event.target.value,
+                category: item.category || item.label,
+              })}>
+                <option value="CANVAS">画布课程</option><option value="VIBECODING">VibeCoding</option><option value="CATEGORY">指定课程归属</option>
+              </select></label>
+              {!item.mode && <label>课程归属<input required maxLength={80} value={item.category || ''}
+                onChange={event => editCategory(index, { category: event.target.value })} /></label>}
+              <div className="kx-controls">
+                <button type="button" aria-label={`上移${item.label}`} title="上移" disabled={!index} onClick={() => {
+                  const items = [...categoryConfig.items];
+                  [items[index - 1], items[index]] = [items[index], items[index - 1]];
+                  setCategoryConfig({ ...categoryConfig, items });
+                }}>↑</button>
+                <button type="button" aria-label={`移除${item.label}`} title="移除分类" onClick={() =>
+                  setCategoryConfig({ ...categoryConfig, items: categoryConfig.items.filter(value => value.id !== item.id) })
+                }>×</button>
+              </div>
+            </div>)}
+            <button type="button" disabled={categoryConfig.items.length >= 20} onClick={() =>
+              setCategoryConfig({ ...categoryConfig, items: [...categoryConfig.items, { id: crypto.randomUUID(), label: '', category: '' }] })
+            }>添加分类</button>
+            <button type="submit" className="kx-primary">保存分类</button>
+          </fieldset>
+          {categoryError && <p role="status">{categoryError}</p>}
+          <button type="button" disabled={busy} onClick={async () => {
+            try { setCategoryConfig(await api.categories()); setCategoriesLoaded(true); setCategoryError(''); }
+            catch (error) { setCategoryError(error.message); }
+          }}>重新加载分类</button>
+        </form>
+      </details>
       <div className="kx-layout">
         <aside>
           <header>
@@ -301,7 +371,7 @@ export default function KuaixueCourses({ api }) {
           </nav>
           <fieldset className="kx-body" disabled={busy}>
             <div data-page="info" hidden={page !== 'info'}>
-              <CourseInfo draft={draft} field={field} />
+            <CourseInfo draft={draft} field={field} categories={categoryConfig.items} />
             </div>
             {draft.permittedDeliveryModes.includes('CANVAS') && (
               <div data-page="CANVAS" hidden={page !== 'CANVAS'}>

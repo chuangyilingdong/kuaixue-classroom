@@ -1,18 +1,13 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   BookOpen,
   Clock3,
   Code2,
   Compass,
-  Film,
-  Grid2X2,
-  Heart,
   Layers3,
-  Palette,
   Search,
-  Camera,
-} from "lucide-react";
-import { categoryFilters } from "../data/courses.js";
+} from "./icons.jsx";
+import { defaultCatalogCategories, matchesCatalogCategory } from "../../shared/catalog-categories.mjs";
 import {
   CatalogState,
   Favorite,
@@ -22,12 +17,6 @@ import {
 } from "./CourseParts.jsx";
 
 const PAGE_SIZE = 10;
-const categoryIcons = {
-  影像创作: Film,
-  视觉设计: Palette,
-  VibeCoding: Code2,
-  商业视觉: Camera,
-};
 export default function CatalogWorkspace({
   catalog,
   saved,
@@ -37,23 +26,18 @@ export default function CatalogWorkspace({
   initialQuery = "",
   focusSearch = false,
 }) {
-  const [type, setType] = useState(categoryFilters[0]);
-  const [category, setCategory] = useState("");
+  const [type, setType] = useState(null);
   const [query, setQuery] = useState(initialQuery);
   const [sort, setSort] = useState("recommended");
-  const [onlySaved, setOnlySaved] = useState(false);
   const [page, setPage] = useState(1);
   const heading = useRef(null);
-  const typeCourses = catalog.courses.filter(
-    (c) => type === categoryFilters[0] || c.permittedDeliveryModes.includes(type === "画布课程" ? "CANVAS" : "VIBECODING"),
-  );
-  const categories = [...new Set(typeCourses.map((c) => c.category))];
-  const results = typeCourses.filter(
-    (c) =>
-      (!category || c.category === category) &&
-      (!onlySaved || saved.has(c.id)) &&
-      matchesQuery(c, query),
-  );
+  const categories = catalog.categories ?? defaultCatalogCategories;
+  const selected = type === null ? undefined : categories.find(item => item.id === type);
+  useEffect(() => {
+    setType(current => categories.some(item => item.id === current) ? current : null);
+    setPage(1);
+  }, [categories]);
+  const results = catalog.courses.filter(c => matchesCatalogCategory(c, selected) && matchesQuery(c, query));
   if (sort === "price") results.sort((a, b) => a.price - b.price);
   if (sort === "duration")
     results.sort(
@@ -63,11 +47,9 @@ export default function CatalogWorkspace({
   const pages = Math.max(1, Math.ceil(results.length / PAGE_SIZE));
   const current = Math.min(page, pages);
   function reset() {
-    setType(categoryFilters[0]);
-    setCategory("");
+    setType(null);
     setQuery("");
     setSort("recommended");
-    setOnlySaved(false);
     setPage(1);
   }
   return (
@@ -85,43 +67,24 @@ export default function CatalogWorkspace({
           </div>
         </div>
         <div className="library-tabs" role="group" aria-label="课程类型">
-          {categoryFilters.map((name, index) => {
-            const Icon = [Compass, Layers3, Code2][index];
+          {[{id: null, label: "全部课程"}, ...categories].map(item => {
+            const Icon = item.id === null ? Compass : item.mode === "VIBECODING" ? Code2 : Layers3;
             return (
               <button
-                key={name}
-                aria-pressed={type === name}
+                key={item.id === null ? "all-courses" : `entry-${item.id}`}
+                aria-pressed={selected ? type === item.id : item.id === null}
                 onClick={() => {
-                  setType(name);
-                  setCategory("");
+                  setType(item.id);
                   setPage(1);
                 }}
               >
                 <Icon size={16} />
-                {name}
+                {item.label}
               </button>
             );
           })}
         </div>
         <div className="library-tools">
-          <div className="scope-tools">
-            {[
-              [false, "探索全部", Grid2X2],
-              [true, "我的收藏", Heart],
-            ].map(([value, label, Icon]) => (
-              <button
-                key={label}
-                aria-pressed={onlySaved === value}
-                onClick={() => {
-                  setOnlySaved(value);
-                  setPage(1);
-                }}
-              >
-                <Icon size={15} />
-                {label}
-              </button>
-            ))}
-          </div>
           <label className="library-search">
             <Search size={16} />
             <input
@@ -137,19 +100,6 @@ export default function CatalogWorkspace({
             />
           </label>
           <select
-            aria-label="课程分类"
-            value={category}
-            onChange={(e) => {
-              setCategory(e.target.value);
-              setPage(1);
-            }}
-          >
-            <option value="">全部分类</option>
-            {categories.map((c) => (
-              <option key={c}>{c}</option>
-            ))}
-          </select>
-          <select
             aria-label="课程排序"
             value={sort}
             onChange={(e) => {
@@ -164,42 +114,8 @@ export default function CatalogWorkspace({
         </div>
       </header>
       <section className="library-content" aria-label="课程目录">
-        {!catalog.loading && !catalog.error && categories.length > 0 && (
-          <div className="category-shortcuts">
-            <h2>课程分类</h2>
-            <div className="category-strip">
-              {categories.slice(0, 4).map((name) => {
-                const Icon = categoryIcons[name] || Layers3;
-                return (
-                  <button
-                    key={name}
-                    aria-pressed={category === name}
-                    onClick={() => {
-                      setCategory(category === name ? "" : name);
-                      setPage(1);
-                    }}
-                  >
-                    <span>
-                      <Icon size={22} />
-                    </span>
-                    <div>
-                      <strong>{name}</strong>
-                      <small>
-                        {
-                          typeCourses.filter((item) => item.category === name)
-                            .length
-                        }{" "}
-                        门课程
-                      </small>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
         <h2 ref={heading} tabIndex={-1}>
-          {onlySaved ? "我的收藏" : category || "全部课程"}{" "}
+          {selected?.label || "全部课程"}{" "}
           <small>{results.length}</small>
         </h2>
         <CatalogState catalog={catalog} retry={retry}>
@@ -262,7 +178,7 @@ export default function CatalogWorkspace({
           ) : (
             <div className="feedback" role="status">
               <Search />
-              {onlySaved ? "当前条件下没有收藏课程" : "没有找到匹配的课程"}
+              没有找到匹配的课程
               <button onClick={reset}>查看全部课程</button>
             </div>
           )}

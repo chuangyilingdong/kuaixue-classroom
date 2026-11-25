@@ -32,6 +32,15 @@ test("connects the desktop catalog adapter to the local API response", async () 
   assert.equal(catalog.courses.find((course) => course.type === "vibe").versionId, "demo-code-v1");
 });
 
+test("serves the default catalog entries through the standalone categories endpoint", async () => {
+  const response = await fetch(`${baseUrl}/api/v1/catalog/categories`);
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.deepEqual(payload.data.entries.map(entry => entry.label), ["画布课程", "VibeCoding"]);
+  const catalog = await loadCourseCatalog({ baseUrl });
+  assert.deepEqual(catalog.categories.map(entry => entry.label), ["画布课程", "VibeCoding"]);
+});
+
 test("serves an immutable course version with objectives and structured steps", async () => {
   const response = await fetch(`${baseUrl}/api/v1/catalog/courses/creative-coding-studio`);
   assert.equal(response.status, 200);
@@ -42,6 +51,45 @@ test("serves an immutable course version with objectives and structured steps", 
   assert.equal(data.course.steps.length, 4);
   assert.ok(data.course.steps.every((step) => step.id && step.title && step.description && step.deliverable));
   assert.deepEqual(data.course.permittedDeliveryModes, ["VIBECODING"]);
+});
+
+test("course detail forwards the published rich introduction", async () => {
+  const course = {
+    id: "rich-intro-course",
+    versionId: "rich-intro-v1",
+    title: "富文本课程",
+    subtitle: "课程摘要",
+    type: "CANVAS",
+    category: "创作实训",
+    level: "入门",
+    durationMinutes: 1,
+    unlockPricePoints: 1,
+    modelLabels: [],
+    previewSteps: [],
+    thumbnailUrl: null,
+    learningObjectives: [],
+    steps: [],
+    assets: [],
+    permittedDeliveryModes: ["CANVAS"],
+    introHtml: "<p>后台发布的课程详细介绍</p>",
+    galleryImages: [],
+    introImages: [],
+  };
+  const richServer = createApiServer({ catalog: [course] });
+  await new Promise((resolve, reject) => {
+    richServer.once("error", reject);
+    richServer.listen(0, "127.0.0.1", resolve);
+  });
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${richServer.address().port}/api/v1/catalog/courses/${course.id}?versionId=${course.versionId}`,
+    );
+    assert.equal(response.status, 200);
+    const { data } = await response.json();
+    assert.equal(data.course.introHtml, course.introHtml);
+  } finally {
+    await new Promise((resolve, reject) => richServer.close((error) => error ? reject(error) : resolve()));
+  }
 });
 
 test("returns a stable not-found response for an unknown course", async () => {

@@ -67,6 +67,26 @@ export function createCourseClient({ base, vibeOrigin, parentOrigin, fetchImpl =
         frameUrl:mode === 'VIBECODING' && run.runtimeTicket ? workbenchUrl(vibeOrigin,parentOrigin,run.id,run.runtimeTicket) : null};
     },
     works: () => request('course-runs/works',{}),
+    async workPreview(item) {
+      const readSavedWork = globalThis.kuaixueDesktop?.vibe?.readSavedWork;
+      if (item.mode === 'VIBECODING' && readSavedWork) {
+        const current = await account();
+        const owned = current.entitlements?.some(grant => grant.courseId === item.courseId && grant.status === 'active');
+        if (!owned) throw new Error('当前账号没有此课程工作区的权益。');
+        let local;
+        try {
+          local = await readSavedWork({
+            userId: current.user.id, courseId: item.courseId, versionId: item.versionId, runId: item.id || '', title: item.title,
+          });
+        } catch (error) {
+          if (error.status === 413) throw error;
+        }
+        if (local) return local;
+      }
+      return request('course-runs/preview', {
+        courseId: item.courseId, versionId: item.versionId, mode: item.mode,
+      }, 120000);
+    },
     async localRuntime(id) {
       const data = await request('course-runs/local-runtime',{id});
       const gateway=data?.modelGateway;

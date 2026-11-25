@@ -3,6 +3,7 @@ import AliyunCaptcha from '@/components/AliyunCaptcha';
 import logo from '../../src/assets/login/kx-class.webp';
 import { enterClass, request } from './account.js';
 import WechatLogin from './WechatLogin.jsx';
+import LoginMedia from '../../src/ui/LoginMedia.jsx';
 
 const methods = [['phone','手机'], ['email','邮箱'], ['wechat','微信']];
 const legal = '/pages/user-agreement/';
@@ -78,6 +79,7 @@ export default function SignIn() {
   }
   const scan = method === 'wechat' && !pendingWechat;
   return <><main className="kx-login"><div className="kx-login-page" data-method={method}>
+    <LoginMedia />
     <div className="kx-column"><img className="kx-logo" src={logo} alt="KX CLASS" /><h1>登录 KX CLASS</h1>
       <div className="kx-tabs" aria-label="登录方式">{methods.map(([id, label]) => <button key={id} type="button" aria-pressed={method === id} disabled={busy} onClick={() => choose(id)}><span>{label}</span></button>)}</div>
       {scan ? <WechatLogin agreed={agreed} onToken={enterClass} bindPhone={value => { setPendingWechat(value); report('首次微信登录，请验证手机号完成绑定。'); }} /> :

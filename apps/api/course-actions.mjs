@@ -7,6 +7,7 @@ export async function sessionPrincipal(req, identity) {
 }
 const methods = new Map([
   ['/api/v1/course-runs/works','works'],
+  ['/api/v1/course-runs/preview','workPreview'],
   ['/api/v1/course-runs/local-runtime','localRuntime'],
   ['/api/v1/generations/quote','quote'], ['/api/v1/generations/confirm','generate'],
   ['/api/v1/generations/status','generationState'],

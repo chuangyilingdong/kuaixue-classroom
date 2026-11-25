@@ -16,7 +16,7 @@ await copyFile(process.execPath,join(runtime,'node','node.exe'));
 const options={bundle:true,platform:'node',target:'node22',logLevel:'warning',minify:false,legalComments:'eof',plugins:[{name:'course-local-only',setup(b){
   b.onResolve({filter:/^(ssh2|node-pty|@lydell\/.*)$/}, args=>({path:args.path,namespace:'local-only'}));
   b.onLoad({filter:/.*/,namespace:'local-only'},()=>({contents:`export function spawn(){throw Error('课程演示未启用终端或远程连接')} export class Client {connect(){spawn()}} export default {Client,spawn};`}));
-}}],external:['bufferutil','utf-8-validate','*.node','playwright-core','@napi-rs/keyring']};
+}}],external:['./course-iab-port.mjs','bufferutil','utf-8-validate','*.node','playwright-core','@napi-rs/keyring']};
 options.plugins.unshift({name:'upstream-compatibility',setup(builder){
   builder.onLoad({filter:/(?:session-store\.port|zcode-protocol-legacy-types)\.ts$/},async args=>{
     let source=await import('node:fs/promises').then(fs=>fs.readFile(args.path,'utf8'));
@@ -45,13 +45,16 @@ options.plugins.unshift({name:'upstream-compatibility',setup(builder){
 }});
 // Local preview uses the Lingdong service collection and course-specific model registry.
 const demoModelRule = {modelMatch:'^.+$', config:{enabled:true,properties:{contextWindow:200000,inputFormat:{supportsText:true,supportsImage:true,supportsVideo:false,supportsAudio:false,supportsPdf:true},outputFormat:{supportsText:true},supportsToolCall:true,supportsJsonSchemaOutput:true,supportsNativeWebSearch:true,supportsMidConversationSystem:false,requiresMfjsToolSchema:false},optionSpecs:{maxOutputTokens:{max:32768,map:'{}'},reasoningLevel:{values:['disabled','low','high','max'],map:'{}'}}}};
-const source=`import {createLocalServices,materializeZCodeBuiltinProviderConfig,getAppConfigDir} from '@zcode/services/node';
+await copyFile(resolve('integrations/vibecoding/course-iab-port.mjs'),join(runtime,'course-iab-port.mjs'));
+await build({...options,entryPoints:[join(root,'packages/desktop/src/main/browserView/browserCommandExecutor.ts')],format:'esm',outfile:join(runtime,'course-iab-executor.mjs'),banner:{js:`import {createRequire as __kxRequire} from 'node:module';const require=__kxRequire(import.meta.url);`}});
+const source=`import {courseBrowserPort} from './course-iab-port.mjs';
+import {createLocalServices,materializeZCodeBuiltinProviderConfig,getAppConfigDir} from '@zcode/services/node';
 import {createHttpServer} from './src/http.ts';
 import {createManagedCdpBrowserRuntime} from '../../apps/zcode-cli/packages/adapters/src/browser/index.ts';
 const zcodeBuiltinProviderConfigFilePath=await materializeZCodeBuiltinProviderConfig({environmentConfigRoot:getAppConfigDir(),content:JSON.stringify({schemaVersion:1,revision:1,config:{providerConfigRules:{templateRules:[],providerRules:[]},modelConfigRules:{modelRules:[${JSON.stringify(demoModelRule)}],modelApiRules:[],providerSiteRules:[],templateModelRules:[],builtinProviderModelRules:[]}}})});
 const browserExecutable=process.env.KUAIXUE_BROWSER_EXECUTABLE?.trim();
 const browserRuntime=browserExecutable?createManagedCdpBrowserRuntime({executablePath:browserExecutable,loadPlaywright:()=>import('playwright-core')}):undefined;
-const services=createLocalServices({providerProvisioningTargetEnabled:false,zcodeBuiltinProviderConfigFilePath,browserControlExecutor:browserRuntime?.browserControlPort});
+const services=createLocalServices({providerProvisioningTargetEnabled:false,zcodeBuiltinProviderConfigFilePath,browserControlExecutor:courseBrowserPort(browserRuntime?.browserControlPort)});
 process.once('SIGTERM',()=>{void browserRuntime?.close();});
 createHttpServer(services,Number(process.env.PORT),{host:'127.0.0.1',authToken:process.env.ZCODE_SERVER_AUTH_TOKEN,authRequired:true});`;
 await build({...options,stdin:{contents:source,resolveDir:join(root,'packages/server'),loader:'ts'},format:'esm',outfile:join(runtime,'course-runtime.mjs'),banner:{js:`import {createRequire as __kxRequire} from 'node:module';const require=__kxRequire(import.meta.url);`},define:{__ZCODE_VERSION__:JSON.stringify('course-preview'),__ZCODE_ENV__:JSON.stringify('test'),__ZCODE_BUILTIN_PROVIDER_CONFIG_JSON__:'undefined'}});

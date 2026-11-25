@@ -15,8 +15,11 @@ test('同一课程的当前和历史权益合并为一张课程卡',()=>{
   assert.equal(groups.length,2);
   assert.equal(groups[0].versionCount,3);
   assert.equal(groups[0].currentOwned,true);
+  assert.equal(groups[0].target.versionId,'v3');
   assert.equal(groups[0].grant.versionId,'v3');
-  assert.equal(groups[1].currentOwned,false);
+  assert.equal(groups[1].currentOwned,true);
+  assert.equal(groups[1].inherited,true);
+  assert.equal(groups[1].target.versionId,'new');
   assert.equal(groups[1].grant.versionId,'old');
   assert.equal(groups[1].target.title,'课程 B');
 });

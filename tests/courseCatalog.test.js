@@ -11,12 +11,21 @@ test("uses the labeled demo catalog when no service origin is configured", async
 });
 
 test("loads and normalizes the proposed service catalog contract", async () => {
-  let requestUrl;
+  const requestUrls = [];
   const result = await loadCourseCatalog({
     baseUrl: "https://kuaixue.test/",
     fetchImpl: async (url, options) => {
-      requestUrl = url;
+      requestUrls.push(url);
       assert.equal(options.headers.Accept, "application/json");
+      if (new URL(url).pathname.endsWith("/categories")) {
+        return {
+          ok: true,
+          json: async () => ({ data: { entries: [
+            { id: "visual", label: "视觉创作", filterType: "category", filterValue: "Design", enabled: true },
+            { id: "vibe", label: "VibeCoding", filterType: "mode", filterValue: "VIBECODING", enabled: true },
+          ] } }),
+        };
+      }
       return {
         ok: true,
         json: async () => ({ data: { items: [{
@@ -36,7 +45,14 @@ test("loads and normalizes the proposed service catalog contract", async () => {
     },
   });
 
-  assert.equal(requestUrl, "https://kuaixue.test/api/v1/catalog/courses");
+  assert.deepEqual(requestUrls, [
+    "https://kuaixue.test/api/v1/catalog/courses",
+    "https://kuaixue.test/api/v1/catalog/categories",
+  ]);
+  assert.deepEqual(result.categories, [
+    { id: "visual", label: "视觉创作", category: "Design" },
+    { id: "vibe", label: "VibeCoding", mode: "VIBECODING" },
+  ]);
   assert.equal(result.source, "service");
   assert.deepEqual(result.courses[0], {
     id: "course-1",
@@ -253,10 +269,112 @@ test("rejects malformed course records instead of rendering incomplete purchase 
 test("keeps courses beyond the first service page available for library filters", async () => {
   const pages = [];
   const result = await loadCourseCatalog({ baseUrl: "https://kuaixue.test", fetchImpl: async url => {
+    if (new URL(url).pathname.endsWith("/categories")) {
+      return { ok: true, json: async () => ({ data: { entries: [
+        { id: "first-entry", label: "第一类", filterType: "mode", filterValue: "CANVAS", enabled: true },
+      ] } }) };
+    }
     const cursor = new URL(url).searchParams.get("cursor");
     pages.push(cursor);
     return { ok: true, json: async () => ({ data: { items: [{id: cursor ? "second" : "first", title:"Course", type:"CANVAS", unlockPricePoints:8}], page: {nextCursor: cursor ? null : "+2="} } }) };
   } });
   assert.deepEqual(pages, [null,"+2="]);
   assert.deepEqual(result.courses.map(c => c.id), ["first","second"]);
+});
+
+test("dedicated category entries override legacy fields and preserve backend order and hidden state", async () => {
+  const entries = [
+    {id:"visual_design",label:"视觉设计",filterType:"category",filterValue:"Design"},
+    {id:"disabled",label:"隐藏",filterType:"mode",filterValue:"CANVAS",enabled:false},
+    {id:"all",label:"代码课程",filterType:"mode",filterValue:"VIBECODING"},
+  ];
+  const result = await loadCourseCatalog({
+    baseUrl:"https://kuaixue.test",
+    fetchImpl:async url => Response.json({data:url.endsWith("/categories") ? {entries} : {
+      items:[{id:"c",title:"Course",type:"CANVAS",unlockPricePoints:0}],
+      categories:[{id:"legacy",label:"旧入口",mode:"CANVAS"}],
+    }}),
+  });
+  assert.deepEqual(result.categories,[
+    {id:"visual_design",label:"视觉设计",category:"Design"},
+    {id:"all",label:"代码课程",mode:"VIBECODING"},
+  ]);
+});
+
+test("an empty entry configuration keeps only the client all-courses entry", async () => {
+  const result = await loadCourseCatalog({
+    baseUrl:"https://kuaixue.test",
+    fetchImpl:async url => Response.json({data:url.endsWith("/categories") ? {entries:[]} : {items:[]}}),
+  });
+  assert.deepEqual(result.categories,[]);
+});
+
+test("the client accepts the backend maximum of 30 entries", async () => {
+  const entries = Array.from({length:30},(_,index)=>({
+    id:`category_${index}`,label:`分类 ${index}`,filterType:"category",filterValue:`类别 ${index}`,
+  }));
+  const result = await loadCourseCatalog({
+    baseUrl:"https://kuaixue.test",
+    fetchImpl:async url => Response.json({data:url.endsWith("/categories") ? {entries} : {items:[]}}),
+  });
+  assert.equal(result.categories.length,30);
+  assert.equal(result.categories.at(-1).category,"类别 29");
+});
+
+test("category refresh reports malformed or unavailable configuration and propagates cancellation", async () => {
+  const fetchCategories = value => async url => url.endsWith("/categories") ? value() : Response.json({data:{items:[]}});
+  for (const response of [
+    Response.json({data:{entries:"invalid"}}),
+    Response.json({data:{entries:[{id:"bad",label:"错误",filterType:"mode",filterValue:"OTHER"}]}}),
+    Response.json({}, {status:503}),
+  ]) {
+    await assert.rejects(loadCourseCatalog({baseUrl:"https://kuaixue.test",fetchImpl:fetchCategories(()=>response)}),CourseCatalogError);
+  }
+  const aborted = Object.assign(new Error("cancelled"),{name:"AbortError"});
+  await assert.rejects(loadCourseCatalog({baseUrl:"https://kuaixue.test",fetchImpl:fetchCategories(()=>{throw aborted;})}),error=>error===aborted);
+});
+
+test("older course services retain their embedded categories when the new endpoint is absent", async () => {
+  const categories = [{id:"legacy",label:"旧入口",mode:"CANVAS"}];
+  const result = await loadCourseCatalog({
+    baseUrl:"https://kuaixue.test",
+    fetchImpl:async url => url.endsWith("/categories") ? Response.json({}, {status:404})
+      : Response.json({data:{items:[],categories}}),
+  });
+  assert.deepEqual(result.categories,categories);
+});
+
+test("desktop category reads preserve a legacy 404 without relying on its CORS headers", async () => {
+  const requested = [];
+  const catalog = await loadCourseCatalog({
+    baseUrl:"https://kuaixue.test",
+    fetchImpl:async url => {
+      requested.push(url);
+      assert.ok(url.endsWith("/courses"));
+      return Response.json({data:{items:[{id:"live",title:"Live course",type:"CANVAS",unlockPricePoints:1}]}});
+    },
+    readCategories:async () => ({status:404,body:{error:"接口不存在"}}),
+  });
+  assert.equal(requested.length,1);
+  assert.equal(catalog.courses[0].id,"live");
+  assert.deepEqual(catalog.categories.map(item => item.id),["canvas","vibecoding"]);
+});
+
+test("desktop category reads keep configured order and report service errors and cancellation", async () => {
+  const options = {baseUrl:"https://kuaixue.test",fetchImpl:async () => Response.json({data:{items:[]}})};
+  const catalog = await loadCourseCatalog({
+    ...options,
+    readCategories:async () => ({status:200,body:{data:{entries:[
+      {id:"code",label:"代码",filterType:"mode",filterValue:"VIBECODING"},
+      {id:"canvas",label:"画布",filterType:"mode",filterValue:"CANVAS"},
+    ]}}}),
+  });
+  assert.deepEqual(catalog.categories.map(item => item.id),["code","canvas"]);
+  await assert.rejects(loadCourseCatalog({...options,readCategories:async () => ({status:503})}),
+    error => error instanceof CourseCatalogError && error.status === 503);
+  const controller = new AbortController();
+  await assert.rejects(loadCourseCatalog({...options,signal:controller.signal,readCategories:async () => {
+    controller.abort();
+    return {status:404};
+  }}), error => error.name === "AbortError");
 });

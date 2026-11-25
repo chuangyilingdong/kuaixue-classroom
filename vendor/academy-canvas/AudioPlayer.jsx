@@ -13,6 +13,7 @@
  *   · 作品读面的媒体卡片 / 大图浮层（`packages/shared/src/workMedia.jsx`）。
  */
 import { useEffect, useRef, useState } from 'react';
+import { Icon } from './icons.jsx';
 
 /**
  * 画布节点（react-flow）会**抢指针**：滑杆上不带 `nodrag` 的话，按住圆圈拖动会被当成**拖框体** ——
@@ -32,27 +33,15 @@ function formatTime(seconds) {
 }
 
 function PlayIcon({ playing }) {
-  return <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-    {playing
-      ? <><rect x="6.5" y="5" width="4" height="14" rx="1.2" fill="currentColor" /><rect x="13.5" y="5" width="4" height="14" rx="1.2" fill="currentColor" /></>
-      : <path d="M8 5.4c0-.8.9-1.3 1.6-.9l9 5.6c.6.4.6 1.4 0 1.8l-9 5.6c-.7.4-1.6-.1-1.6-.9V5.4Z" fill="currentColor" />}
-  </svg>;
+  return <Icon name={playing ? 'pause' : 'play'} />;
 }
 
 function VolumeIcon({ muted }) {
-  return <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-    <path d="M4 9.5h3L11 6.2v11.6L7 14.5H4a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1Z" fill="currentColor" />
-    {muted
-      ? <path d="M15 9.5l5 5m0-5l-5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" fill="none" />
-      : <path d="M14.5 9.2a4 4 0 0 1 0 5.6M17.2 6.8a7.6 7.6 0 0 1 0 10.4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" fill="none" />}
-  </svg>;
+  return <Icon name={muted ? 'mute' : 'volume'} />;
 }
 
 function DownloadIcon() {
-  return <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-    <path d="M12 4.5v10m0 0 3.8-3.8M12 14.5 8.2 10.7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-    <path d="M5.5 18.5h13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" fill="none" />
-  </svg>;
+  return <Icon name="download" />;
 }
 
 /** 下载到本地时用的文件名：框体标题 + 从地址里看出来的扩展名（看不出来就按 mp3）。 */

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, Search, X } from "lucide-react";
+import { ArrowRight, Search, X } from "./icons.jsx";
 import { matchesQuery, CourseMark } from "./CourseParts.jsx";
 
 const RESULT_LIMIT = 6;

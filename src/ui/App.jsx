@@ -1,16 +1,17 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import {
   BookOpen,
-  CircleHelp,
+  Coins,
   Compass,
   Grid2X2,
   Layers3,
+  LogOut,
   Moon,
   RefreshCw,
   Settings2,
   Sun,
   X,
-} from "lucide-react";
+} from "./icons.jsx";
 import { loadCourseCatalog } from "../services/courseCatalog.js";
 import CatalogWorkspace from "./CatalogWorkspace.jsx";
 import CourseDetail from "./CourseDetail.jsx";
@@ -64,6 +65,7 @@ function Classroom({ initialAccount, onSignedOut }) {
   );
   const [route, setRoute] = useState(() => window.location.hash === '#account' ? 'learning' : 'home');
   const [run, setRun] = useState(null);
+  const [pendingRoute, setPendingRoute] = useState(null);
   const saveBeforeLeaving = useRef(null);
   const [course, setCourse] = useState(null);
   const [saved, setSaved] = useState(initialFavorites);
@@ -77,7 +79,8 @@ function Classroom({ initialAccount, onSignedOut }) {
   const settingsPanelRef = useRef(null),
     settingsTriggerRef = useRef(null),
     searchInputRef = useRef(null),
-    returnFocus = useRef(null);
+    returnFocus = useRef(null),
+    leaveDialogStayRef = useRef(null);
   const [learning, setLearning] = useState({ account: initialAccount });
   const accountRequest = useRef(null);
   async function readAccount() {
@@ -104,19 +107,41 @@ function Classroom({ initialAccount, onSignedOut }) {
     }
     onSignedOut();
   }
-  useEffect(() => () => accountRequest.current?.abort(), []);
+  useEffect(() => {
+    void readAccount();
+    const refresh = () => void readAccount();
+    window.addEventListener('focus', refresh);
+    const timer = window.setInterval(refresh, 30_000);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      window.clearInterval(timer);
+      accountRequest.current?.abort();
+    };
+  }, []);
   function leaveRun() {
     if (run?.lease) void localWorkshop.closeVibe(run.lease).catch(() => {});
     setRun(null);
   }
-  async function goto(next) {
-    if (run && !(await saveBeforeLeaving.current?.())) return;
+  function performGoto(next) {
     returnFocus.current = null;
+    setPendingRoute(null);
     setSearchOpen(false);
     setSettingsOpen(false);
     leaveRun();
     setCourse(null);
     setRoute(next);
+  }
+  async function goto(next) {
+    if (run) {
+      setPendingRoute(next);
+      return;
+    }
+    performGoto(next);
+  }
+  async function confirmGoto() {
+    if (!pendingRoute) return;
+    if (!(await saveBeforeLeaving.current?.())) return;
+    performGoto(pendingRoute);
   }
   useEffect(() => {
     if (!localWorkshop) return;
@@ -145,9 +170,6 @@ function Classroom({ initialAccount, onSignedOut }) {
       else next.add(id);
       return next;
     });
-  }
-  function pending(name) {
-    setNotice(`${name}服务待接入。`);
   }
   function retry() {
     setReload((n) => n + 1);
@@ -183,6 +205,17 @@ function Classroom({ initialAccount, onSignedOut }) {
       setSearchOpen(false);
     }
   }, [course]);
+  useEffect(() => {
+    if (!pendingRoute) return;
+    leaveDialogStayRef.current?.focus({ preventScroll: true });
+    function escape(e) {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      setPendingRoute(null);
+    }
+    document.addEventListener("keydown", escape);
+    return () => document.removeEventListener("keydown", escape);
+  }, [pendingRoute]);
   useEffect(() => {
     if (!course || run) return;
     function escape(e) {
@@ -251,22 +284,29 @@ function Classroom({ initialAccount, onSignedOut }) {
           ))}
         </nav>
         <div className="rail-bottom">
-          <button
-            className="rail-btn"
-            aria-label="帮助与反馈"
-            title="帮助与反馈"
-            onClick={() => pending("帮助与反馈")}
-          >
-            <CircleHelp size={17} />
-          </button>
-          <button
-            className="avatar"
-            aria-label="我的账户"
-            title="我的账户"
-            onClick={() => goto("learning")}
-          >
-            <UserAvatar user={learning.account?.user}/>
-          </button>
+          <div className="rail-account">
+            <div className="rail-points" aria-live="polite" title="当前积分">
+              <Coins size={17} aria-hidden="true" />
+              <span className="rail-points-total">{learning.loading ? '读取中' : learning.account?.points == null ? '—' : learning.account.points.toLocaleString('zh-CN')}</span>
+            </div>
+            <button
+              className="avatar"
+              aria-label="我的账户"
+              title="我的账户"
+              onClick={() => goto("learning")}
+            >
+              <UserAvatar user={learning.account?.user}/>
+            </button>
+            <button
+              className="rail-account-logout"
+              aria-label={initialAccount.demo ? '退出演示' : '退出账号'}
+              title={initialAccount.demo ? '退出演示' : '退出账号'}
+              onClick={() => void leaveAccount()}
+            >
+              <LogOut size={14} aria-hidden="true" />
+              <span>{initialAccount.demo ? '退出演示' : '退出账号'}</span>
+            </button>
+          </div>
         </div>
       </aside>
       <div className="window-drag" aria-hidden="true" />
@@ -386,11 +426,11 @@ function Classroom({ initialAccount, onSignedOut }) {
             retry={retry}
           />
         </div>
-        {!course && route === "works" && <WorksView account={learning.account} onAccount={() => goto('learning')} onRun={next => {
+        {!course && route === "works" && <WorksView account={learning.account} catalog={catalog} onAccount={() => goto('learning')} onRun={next => {
           setCourse({id:next.course.id,versionId:next.course.versionId,title:next.course.title});setRun(next);
         }} />}
         {!course && route === "learning" && (
-          <LearningView state={learning} catalog={catalog} read={readAccount} leave={leaveAccount} browse={() => goto("library")} open={open} />
+          <LearningView state={learning} catalog={catalog} browse={() => goto("library")} open={open} saved={saved} toggle={toggle} retry={retry} />
         )}
         {run && <Suspense fallback={<p>正在打开课程工作区…</p>}><CourseRun key={`${run.id}/${run.mode}`} run={run} close={close} saveBeforeLeaving={saveBeforeLeaving} /></Suspense>}
         {course && !run && (
@@ -408,6 +448,29 @@ function Classroom({ initialAccount, onSignedOut }) {
           </div>
         )}
       </main>
+      {pendingRoute && (
+        <div
+          className="leave-dialog-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPendingRoute(null);
+          }}
+        >
+          <section
+            className="leave-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="leave-dialog-title"
+            aria-describedby="leave-dialog-description"
+          >
+            <h2 id="leave-dialog-title">确定要离开工作区吗？</h2>
+            <p id="leave-dialog-description">当前作品可能尚未保存，离开后会返回课程页面。</p>
+            <div className="leave-dialog-actions">
+              <button ref={leaveDialogStayRef} type="button" onClick={() => setPendingRoute(null)}>留在工作区</button>
+              <button className="leave-dialog-primary" type="button" onClick={() => void confirmGoto()}>继续离开</button>
+            </div>
+          </section>
+        </div>
+      )}
       {notice && (
         <div className="toast" role="status">
           {notice}

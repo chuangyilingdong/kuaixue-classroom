@@ -5,6 +5,7 @@ const {createHash}=require('node:crypto');
 const { pathToFileURL } = require("node:url");
 const fsp=require('node:fs/promises');
 const {localProjectStatus,projectPaths,writeSnapshotMetadata}=require('./local-project.cjs');
+const {installCourseBrowserWindow,registerCourseBrowserIpc}=require('./course-browser.cjs');
 const classroomWindows = new Set();
 const dist = path.resolve(__dirname, '../dist');
 const {readFileSync} = require('node:fs');
@@ -95,6 +96,7 @@ register('workshop', classroomWindows, {
   catalog: () => workshop().catalog(), detail: (id, v) => workshop().detail(id, v), account: () => workshop().account(),
   purchase: (id, v) => workshop().purchase(id, v),
   works: () => workshop().works(),
+  workPreview: item => workshop().workPreview(item),
   exportProject: async id => {
     const { mkdir, mkdtemp, writeFile } = require('node:fs/promises');
     const project = workshop().projectFile(id);
@@ -106,6 +108,10 @@ register('workshop', classroomWindows, {
     if (error) throw new Error(`工程已导出至 ${dir}`);
     return dir;
   },
+});
+registerCourseBrowserIpc({
+  ipcMain,
+  trustedWindow:event=>trustedWindow(event,classroomWindows),
 });
 const localHosts = new Map();
 const courseLocalHosts = new Map();
@@ -174,7 +180,7 @@ ipcMain.handle('vibe:startLocal',async(event,request)=>{
   courseLocalHosts.set(owner,current);
   try {
     const host=await require('./course-local-vibe.cjs').openCourseLocalVibe({
-      run,gateway:request.gateway,userId:request.userId,
+      run,gateway:request.gateway,userId:request.userId,browserHost:event.sender,
       resourceRoot:app.isPackaged?process.resourcesPath:path.resolve(__dirname,'../release'),
       dataRoot:app.getPath('userData'),
     });
@@ -186,11 +192,24 @@ ipcMain.handle('vibe:startLocal',async(event,request)=>{
     throw error;
   }
 });
-ipcMain.handle('vibe:saveLocal',(event,request)=>{
+ipcMain.handle('vibe:saveLocal',async(event,request)=>{
   trustedWindow(event,classroomWindows);
   const host=requireCourseLocal(event.sender.id,request?.lease);
   if(request?.runId!==host.runId) throw Error('本机工作区与课程不符');
-  return authorizedWorkspaceDirectory(host,request?.directory).then(directory=>host.snapshot(directory));
+  const directory = await authorizedWorkspaceDirectory(host,request?.directory);
+  return host.snapshot(directory);
+});
+ipcMain.handle('vibe:saveWorkPreview', async (event, request) => {
+  trustedWindow(event, classroomWindows);
+  const host = requireCourseLocal(event.sender.id, request?.lease);
+  if (request?.runId !== host.runId) throw Error('本机工作区与课程不符');
+  const directory = await authorizedWorkspaceDirectory(host, request?.directory);
+  await require('./saved-work.cjs').saveWorkPreview(app.getPath('userData'), host.context, directory);
+  return { saved: true };
+});
+ipcMain.handle('vibe:readSavedWork', (event, request) => {
+  trustedWindow(event, classroomWindows);
+  return require('./saved-work.cjs').readSavedWorkPreview(app.getPath('userData'), request);
 });
 ipcMain.handle('vibe:previewLocal',(event,request)=>{
   trustedWindow(event,classroomWindows);
@@ -295,6 +314,18 @@ ipcMain.handle('media:download',async(event,request)=>{
   await pipeline(Readable.fromWeb(response.body),require('node:fs').createWriteStream(choice.filePath));
   return {cancelled:false,filePath:choice.filePath};
 });
+ipcMain.handle('catalog:categories',async event => {
+  trustedWindow(event,classroomWindows);
+  if (!config.integrated) throw Error('此版本使用演示课程目录');
+  const response = await event.sender.session.fetch(config.apiOrigin + '/api/v1/catalog/categories', {
+    headers: {Accept:'application/json'},
+    credentials:'omit',
+    cache:'no-store',
+    redirect:'error',
+    signal:AbortSignal.timeout(15000),
+  });
+  return {status:response.status, body:await response.json().catch(() => null)};
+});
 ipcMain.handle('account:login',async event => {
   trustedWindow(event,classroomWindows);
   if (!config.integrated) throw Error('此版本使用演示学员');
@@ -320,11 +351,19 @@ function createWindow() {
   const window = new BrowserWindow({
     width: 1440, height: 900, minWidth: 1040, minHeight: 680,
     backgroundColor: "#0b0c0d", title: "快学课堂", autoHideMenuBar: true,
+    icon: path.join(__dirname, 'app-icon.png'),
     ...(integrated ? { titleBarStyle: "hidden", titleBarOverlay: overlay("dark") } : {}),
-    webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true },
+    webPreferences: {
+      preload: path.join(__dirname, "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webviewTag: true,
+    },
   });
   const windows = classroomWindows;
   windows.add(window);
+  installCourseBrowserWindow(window);
   const owner = window.webContents.id;
   window.on("closed", () => {endHost(owner);endCourseLocal(owner);windows.delete(window);});
   window.webContents.on("render-process-gone", () => {endHost(owner);endCourseLocal(owner);});
@@ -342,6 +381,7 @@ function createWindow() {
   }
 }
 if (singleInstance) app.whenReady().then(() => {
+  if (process.platform === 'win32') app.setAppUserModelId('com.kuaixue.classroom');
   if (config.integrated) protocol.handle('kuaixue', request => {
     const url = new URL(request.url);
     if (url.host !== 'classroom' || request.method !== 'GET') return new Response(null,{status:404});

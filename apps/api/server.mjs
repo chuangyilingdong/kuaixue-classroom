@@ -5,6 +5,7 @@ import {mainSiteRuntimeFromEnv} from './main-site-runtime.mjs';
 import {canvasGenerationFromEnv} from './canvas-generation.mjs';
 import {snapshotLimits} from '../../shared/local-snapshot.mjs';
 import {verifyCourseAssetAccess} from '../../shared/course-asset-url.mjs';
+import {defaultCatalogCategories} from '../../shared/catalog-categories.mjs';
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -78,13 +79,13 @@ function courseDetails(course) {
   const {
     id, versionId, title, subtitle, type, category, level, durationMinutes,
     unlockPricePoints, modelLabels, previewSteps, thumbnailUrl = null, bannerUrl, coverFocus, purchaseCount = null, visualTone,
-    icon, learningObjectives, steps, assets, permittedDeliveryModes, galleryImages, introImages, mediaCredit,
+    icon, learningObjectives, steps, assets, permittedDeliveryModes, introHtml, galleryImages, introImages, mediaCredit,
     classroomConfig, vibeModelIds, vibeModelLabels,
   } = course;
   return {
     id, versionId, title, subtitle, type, category, level, durationMinutes,
     unlockPricePoints, modelLabels, previewSteps, thumbnailUrl, bannerUrl, coverFocus, purchaseCount, visualTone, icon,
-    learningObjectives, steps, assets, permittedDeliveryModes, galleryImages, introImages, mediaCredit,
+    learningObjectives, steps, assets, permittedDeliveryModes, introHtml, galleryImages, introImages, mediaCredit,
     classroomConfig, vibeModelIds, vibeModelLabels,
   };
 }
@@ -129,7 +130,7 @@ function catalogPage(catalog, params) {
 }
 
 export function createApiServer({ catalog = DEFAULT_CATALOG, accountReader, platform, identity, desktopAuth,
-  assetSigningSecret='', allowedOrigins = ["http://127.0.0.1:5173", "http://localhost:5173"] } = {}) {
+  assetSigningSecret='', internalAccessSecret='', allowedOrigins = ["http://127.0.0.1:5173", "http://localhost:5173"] } = {}) {
   const allowed = new Set(allowedOrigins.filter(origin => origin !== "null" && origin !== "*"));
   return createServer(async (req, res) => {
     const origin = req.headers.origin;
@@ -156,6 +157,22 @@ export function createApiServer({ catalog = DEFAULT_CATALOG, accountReader, plat
       return json(res, 400, { error: { code: "BAD_URL", message: "Invalid request URL." } });
     }
 
+    if (req.method === 'POST' && url.pathname === '/internal/course-runtime/access') {
+      const local = ['127.0.0.1','::1','::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+      if (!local || origin || !internalAccessSecret || req.headers['x-kuaixue-internal-secret'] !== internalAccessSecret) {
+        return json(res,403,{error:{code:'FORBIDDEN'}});
+      }
+      try {
+        const context = await readBody(req);
+        if (!['userId','courseId','versionId','runId'].every(key =>
+          typeof context[key] === 'string' && context[key].length > 0 && context[key].length <= 160) ||
+          !ALLOWED_TYPES.has(context.mode)) return json(res,400,{error:{code:'INVALID_RUNTIME_CONTEXT'}});
+        if (!platform?.hasRuntimeAccess) return json(res,503,{error:{code:'COURSE_ACCESS_UNAVAILABLE'}});
+        return json(res,200,{data:{allowed:platform.hasRuntimeAccess(context)}});
+      } catch (error) {
+        return json(res,error instanceof CourseProblem ? error.status : 503,{error:{code:'COURSE_ACCESS_UNAVAILABLE'}});
+      }
+    }
     if (req.method === 'POST' && url.pathname === '/api/v1/desktop/logout') {
       if (origin && !allowed.has(origin)) return json(res,403,{error:{code:'ORIGIN_DENIED'}});
       if (!desktopAuth?.revokeSession) return json(res,503,{error:{code:'LOGOUT_NOT_CONFIGURED'}});
@@ -330,9 +347,31 @@ export function createApiServer({ catalog = DEFAULT_CATALOG, accountReader, plat
       }
     }
     if (req.method === "GET" && url.pathname === "/healthz") return json(res, 200, { status: "ok" });
+    if (req.method === "GET" && url.pathname === "/api/v1/catalog/categories") {
+      const config = platform?.catalogCategories?.();
+      const entries = config
+        ? config.items.map(item => ({
+        id: item.id,
+        label: item.label,
+        filterType: item.mode ? "mode" : "category",
+        filterValue: item.mode || item.category,
+        enabled: true,
+      }))
+        : defaultCatalogCategories.map(item => ({
+          id: item.id,
+          label: item.label,
+          filterType: "mode",
+          filterValue: item.mode,
+          enabled: true,
+        }));
+      const categories = [...new Set((platform ? platform.catalog() : catalog).map(course => course.category).filter(Boolean))];
+      res.setHeader("Cache-Control", "public, max-age=30");
+      return json(res, 200, { data: { categories, entries } });
+    }
     if (req.method === "GET" && url.pathname === "/api/v1/catalog/courses") {
       const result = catalogPage(platform ? platform.catalog() : catalog, url.searchParams);
       if (result.error) return json(res, result.status, { error: { code: "INVALID_CATALOG_QUERY", message: result.error } });
+      if (platform?.catalogCategories) result.data.categories = platform.catalogCategories().items;
       res.setHeader("Cache-Control", "public, max-age=30");
       return json(res, 200, result);
     }

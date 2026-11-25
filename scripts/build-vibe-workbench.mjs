@@ -3,6 +3,7 @@ import {createRequire} from 'node:module';
 import {resolve} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {brandVibeWorkbench} from './brand-vibe-workbench.mjs';
+import {courseIconsPlugin} from '../integrations/vibecoding/course-icons.mjs';
 
 const upstream = process.argv[2];
 if (!upstream) throw Error('请传入灵动 VibeCoding 源码根目录');
@@ -11,6 +12,7 @@ const require = createRequire(resolve(root, 'package.json'));
 const {build} = await import(pathToFileURL(require.resolve('vite')).href);
 const entry = await readFile(new URL('../integrations/vibecoding/course-entry.tsx', import.meta.url), 'utf8');
 const original = resolve(root, 'src/main.tsx');
+const courseTestIdsModule = '\0kuaixue-zcode-test-ids';
 const serviceHooks = new Set(['Task','Agent','Session'].map(name => resolve(root,`../ui/src/hooks/useZCode${name}Service.ts`)));
 // A course workspace arrives after RPC bootstrap. Keep the same hooks on both renders.
 async function loadCourseSource(id) {
@@ -104,34 +106,194 @@ async function loadCourseSource(id) {
     return source;
   }
   if (resolve(id) === resolve(root,'../ui/src/v4/composer/V4ComposerToolbar.tsx')) {
-    const source = await readFile(id, 'utf8');
+    let source = await readFile(id, 'utf8');
     const quota = /  const classroomQuotaLabel = useMemo\(\(\) => \{[\s\S]*?\n  \}, \[classroomSnapshot\?\.quota\?\.limit, classroomSnapshot\?\.quota\?\.used\]\);/;
     if (!quota.test(source)) throw Error('ZCode 课程模型栏额度结构变化，请核对课程适配');
-    return source.replace(quota,'  const classroomQuotaLabel = "";');
+    source = source.replace(quota,'  const classroomQuotaLabel = "";');
+    const thoughtImport = 'import { getNextThoughtLevelValue } from "@/chat-input-toolbar/thoughtLevelOptions.js";';
+    if (!source.includes(thoughtImport)) throw Error('ZCode 思考档位入口变化，请核对课程模型面板');
+    source = source.replace(
+      thoughtImport,
+      'import { getNextThoughtLevelValue, getThoughtLevelLabel } from "@/chat-input-toolbar/thoughtLevelOptions.js";',
+    );
+    const shortcutLabel = '  const thoughtShortcutLabel = useShortcutCommandLabel("cycleThoughtLevel");';
+    if (!source.includes(shortcutLabel)) throw Error('ZCode 思考档位快捷键入口变化，请核对课程模型面板');
+    source = source.replace(shortcutLabel,`${shortcutLabel}
+  const classroomComposerOptions = {
+    providerLabel: "模型供应商",
+    modelsLabel: "模型",
+    effortLabel: "思考强度",
+    effortShortcutLabel: thoughtShortcutLabel,
+    selectModelLabel: "选择模型",
+    levels:
+      thoughtOption?.options?.map((entry) => ({
+        value: entry.value,
+        label: getThoughtLevelLabel(intl, displayProvider, thoughtOption, entry),
+      })) ?? [],
+    value: String(thoughtOption?.currentValue ?? ""),
+    onValueChange: handleThoughtValueChange,
+  };`);
+    const start = source.indexOf('      ) : modelMenuVisible ? (');
+    const end = source.indexOf('      {classroomQuotaLabel ? (',start);
+    if (start < 0 || end < 0) throw Error('ZCode 模型/思考档工具栏结构变化，请核对课程模型面板');
+    source = source.slice(0,start) + `      ) : modelMenuVisible ? (
+        <ModelConfigSelect
+          modelGroups={classroomModelSelectGroups}
+          normalizedValue={normalizedModelValue}
+          triggerLabel={modelTriggerDisplay.fullLabel}
+          triggerLabelPrefix={modelTriggerDisplay.providerPrefix}
+          triggerLabelValue={modelTriggerDisplay.modelLabel}
+          triggerLabelPrefixClassName="composer-provider-prefix inline group-data-[composer-provider-compact=true]/toolbar:hidden"
+          composerOptions={classroomComposerOptions}
+          showManageModelsAction={showManageModelsAction}
+          manageModelsLabel={manageModelsLabel}
+          onManageModels={handleOpenModelProviderSettings}
+          lockReasonMessage={intl.formatMessage({
+            id: "chat.toolbar.modelSwitch.lockedByRunningTask",
+          })}
+          isItemLocked={isModelOptionLocked}
+          onValueChange={handleModelValueChange}
+          disabled={disabled || recoveryPending || modelSelectionState.status !== "ready"}
+          tooltipTitle={modelTriggerDisplay.fullLabel}
+          shortcutLabel={modelShortcutLabel}
+          triggerRef={modelTriggerRef}
+          open={activeConfigPicker === "model"}
+          onOpenChange={handleModelPickerOpenChange}
+          openRequestKey={modelMenuOpenRequestKey}
+          labelVisibilityClassName="hidden @sm/composer:inline-flex"
+          indicatorClassName="block group-data-[composer-model-icon=true]/toolbar:hidden"
+          triggerLabelClassName="block min-w-0 text-left group-data-[composer-model-icon=true]/toolbar:hidden [&>span]:max-w-full [&>span>span]:block [&>span>span]:truncate"
+          triggerClassName="composer-model-trigger group-data-[composer-model-icon=true]/toolbar:size-7 group-data-[composer-model-icon=true]/toolbar:p-0 group-data-[composer-model-icon=true]/toolbar:gap-0 group-data-[composer-model-icon=true]/toolbar:justify-center"
+          triggerIconClassName="hidden group-data-[composer-model-icon=true]/toolbar:inline-flex"
+          focusSelectorOnClose={V4_COMPOSER_INPUT_SELECTOR}
+          providerSubmenuClassName={providerSubmenuClassName}
+        />
+      ) : null}
+` + source.slice(end);
+    return source;
+  }
+  if (resolve(id) === resolve(root,'../ui/src/app-shell/AnimatedSidePanePanel.tsx')) {
+    let source = await readFile(id,'utf8');
+    const browserAvailable = `supportsEmbeddedBrowser || typeof (globalThis as typeof globalThis & {
+      __kuaixueOpenBrowser?: unknown;
+    }).__kuaixueOpenBrowser === "function"`;
+    const menu = '{supportsEmbeddedBrowser ? (';
+    const launcher = '    supportsEmbeddedBrowser,\n  })';
+    source = source.replace(/\r\n/g,'\n');
+    if (!source.includes(menu) || !source.includes(launcher)) throw Error('ZCode 浏览器菜单入口变化，请核对课程适配');
+    return source.replace(menu,`{(${browserAvailable}) ? (`)
+      .replace(launcher,`    supportsEmbeddedBrowser: ${browserAvailable},\n  })`);
+  }
+  if (resolve(id) === resolve(root,'../ui/src/hooks/useAppPanels.ts')) {
+    let source = await readFile(id,'utf8');
+    source = source.replace(/\r\n/g,'\n');
+    const fallbackOpen = '        window.open(payload.url, "_blank", "noopener,noreferrer");';
+    if (!source.includes(fallbackOpen)) throw Error('ZCode 外部链接入口变化，请核对课程浏览器适配');
+    source = source.replace(fallbackOpen,`        const courseBrowser = (globalThis as typeof globalThis & {
+          __kuaixueOpenBrowser?: (url?: string, mode?: "toggle" | "new-tab") => boolean;
+        }).__kuaixueOpenBrowser;
+        if (courseBrowser?.(payload.url)) return;
+        window.open(payload.url, "_blank", "noopener,noreferrer");`);
+    const toggle = `    if (!supportsEmbeddedBrowser) {
+      // 能力边界：Web/mobile 当前不支持 Electron webview，不创建 Browser side pane。
+      logger.info(\`[App] 当前壳层不支持内嵌浏览器，忽略切换请求 workspace=\${workspaceAbsPath}\`);
+      return;
+    }`;
+    if (!source.includes(toggle)) throw Error('ZCode Browser 切换入口变化，请核对课程浏览器适配');
+    source = source.replace(toggle,`    if (!supportsEmbeddedBrowser) {
+      const courseBrowser = (globalThis as typeof globalThis & {
+        __kuaixueOpenBrowser?: (url?: string, mode?: "toggle" | "new-tab") => boolean;
+      }).__kuaixueOpenBrowser;
+      if (courseBrowser?.()) return;
+      logger.info(\`[App] 当前壳层不支持内嵌浏览器，忽略切换请求 workspace=\${workspaceAbsPath}\`);
+      return;
+    }`);
+    const newTab = `    if (!supportsEmbeddedBrowser) {
+      // 能力边界：Web/mobile 当前不支持 Electron webview，不创建 Browser side pane。
+      logger.info(\`[App] 当前壳层不支持内嵌浏览器，忽略新建请求 workspace=\${workspaceAbsPath}\`);
+      return;
+    }`;
+    const second = source.indexOf(newTab);
+    if (second < 0) throw Error('ZCode Browser 新建入口变化，请核对课程浏览器适配');
+    source = source.slice(0, second) + `    if (!supportsEmbeddedBrowser) {
+      const courseBrowser = (globalThis as typeof globalThis & {
+        __kuaixueOpenBrowser?: (url?: string, mode?: "toggle" | "new-tab") => boolean;
+      }).__kuaixueOpenBrowser;
+      if (courseBrowser?.(undefined, "new-tab")) return;
+      logger.info(\`[App] 当前壳层不支持内嵌浏览器，忽略新建请求 workspace=\${workspaceAbsPath}\`);
+      return;
+    }` + source.slice(second + newTab.length);
+    return source;
   }
   if (resolve(id) === resolve(root,'../ui/src/lib/assistantPreviewCards.ts')) {
     const source = await readFile(id, 'utf8');
     const matcher = /export function shouldOpenAssistantHtmlInBrowser\([\s\S]*?\n}\n/;
     if (!matcher.test(source)) throw Error('ZCode HTML 产物打开入口变化，请核对课程适配');
+    const changeGate = '    if (reference.kind === "markdown" || reference.kind === "html") {';
+    if (!source.includes(changeGate)) throw Error('ZCode 产物文件变更门禁变化，请核对课程适配');
     return source.replace(matcher,`export function shouldOpenAssistantHtmlInBrowser(): boolean {
   return false;
 }
-`);
+`).replace(changeGate,`    if (reference.kind === "html" && getPathLeaf(reference.path).toLowerCase() === "index.html") {
+      // 课程作品入口可能在前一轮写入，当前轮只继续测试或说明。后续
+      // AssistantPreviewCards 仍会用 fileService.stat 校验文件真实存在。
+      fileReferences.push(reference);
+      continue;
+    }
+${changeGate}`);
+  }
+  if (resolve(id) === resolve(root,'../shared/src/conversation-preview-artifacts.ts')) {
+    let source = await readFile(id, 'utf8');
+    source = source.replace(/\r\n/g,'\n');
+    const requires = '      const requiresFileChanges = reference.kind === "markdown" || reference.kind === "html";';
+    if (!source.includes(requires)) throw Error('ZCode 共享产物文件变更规则变化，请核对课程适配');
+    source = source.replace(requires,`${requires}
+      const stableHtmlEntry =
+        reference.kind === "html" && getPathLeaf(reference.path).toLowerCase() === "index.html";`);
+    const gate = `      if (
+        requiresFileChanges &&`;
+    if (!source.includes(gate)) throw Error('ZCode 共享产物文件变更门禁变化，请核对课程适配');
+    source = source.replace(gate,`      if (
+        requiresFileChanges &&
+        !stableHtmlEntry &&`);
+    return source.replace(
+      '        requiresFileChanges,',
+      '        requiresFileChanges: requiresFileChanges && !stableHtmlEntry,',
+    );
   }
   if (resolve(id) === resolve(root,'../ui/src/previewPaneContent.tsx')) {
-    const source = await readFile(id, 'utf8');
+    let source = await readFile(id, 'utf8');
+    const reactImport = 'import { useMemo, type Ref, type SyntheticEvent, type UIEventHandler } from "react";';
+    if (!source.includes(reactImport)) throw Error('ZCode 文件预览 React 入口变化，请核对课程适配');
+    source = source.replace(
+      reactImport,
+      'import { useEffect, useMemo, useState, type Ref, type SyntheticEvent, type UIEventHandler } from "react";',
+    );
     const language = '  const fileLanguage = inferCodeLanguage(source.path, filePreview.content);';
     if (!source.includes(language)) throw Error('ZCode 文件预览语言入口变化，请核对课程适配');
+    const props = 'interface PreviewPaneContentProps {';
+    if (!source.includes(props)) throw Error('ZCode 文件预览属性入口变化，请核对课程适配');
+    source = source.replace(props,`function KuaixueHtmlPreview({ title, content }: { title: string; content: string }) {
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  useEffect(() => {
+    const next = URL.createObjectURL(new Blob([content], { type: "text/html;charset=utf-8" }));
+    setPreviewUrl(next);
+    return () => URL.revokeObjectURL(next);
+  }, [content]);
+  return (
+    <iframe
+      title={title}
+      src={previewUrl ?? undefined}
+      sandbox="allow-scripts allow-forms allow-modals allow-downloads allow-popups"
+      className="h-full w-full border-0 bg-white"
+    />
+  );
+}
+
+${props}`);
     return source.replace(language,`${language}
   if (source.type !== "code-review" && fileLanguage === "html") {
-    return (
-      <iframe
-        title={source.title}
-        srcDoc={filePreview.content}
-        sandbox="allow-scripts allow-forms allow-modals allow-downloads allow-popups"
-        className="h-full w-full border-0 bg-white"
-      />
-    );
+    return <KuaixueHtmlPreview title={source.title} content={filePreview.content} />;
   }`);
   }
   if (!serviceHooks.has(resolve(id))) return null;
@@ -149,6 +311,59 @@ await build({root, configFile:resolve(root, 'vite.config.ts'), base:'/kuaixue/wo
     'kuaixue-course-preview.css':fileURLToPath(new URL('../integrations/vibecoding/course-html-preview.css',import.meta.url)),
     'kuaixue-classroom-font.css':fileURLToPath(new URL('../electron/classroom-font.css',import.meta.url))}},
   plugins:[
+    {name:'kuaixue-workbench-brand-assets', enforce:'pre', resolveId(source) {
+      if (source.endsWith('/assets/lingdong-app-icon.png')) return fileURLToPath(new URL('../src/assets/kx-class-mark.png', import.meta.url));
+      return null;
+    }},
+    courseIconsPlugin(resolve(root, '../ui')),
+    {name:'kuaixue-zcode-v4-ui',enforce:'pre',resolveId(source){
+      const modules = {
+        '@/ModelConfigSelect.js':resolve(root,'../ui/src/ModelConfigSelect.course-v4.tsx'),
+        '@/chat-input-toolbar/ComposerModelMenu.js':resolve(root,'../ui/src/chat-input-toolbar/ComposerModelMenu.tsx'),
+        '@/chat-input-toolbar/ComposerProviderMenu.js':resolve(root,'../ui/src/chat-input-toolbar/ComposerProviderMenu.tsx'),
+        '@/chat-input-toolbar/ComposerEffortHeading.js':resolve(root,'../ui/src/chat-input-toolbar/ComposerEffortHeading.tsx'),
+        '@/chat-input-toolbar/ComposerTriggerTransition.js':resolve(root,'../ui/src/chat-input-toolbar/ComposerTriggerTransition.tsx'),
+        '@/chat-input-toolbar/composer-thought-slider.css':resolve(root,'../ui/src/chat-input-toolbar/composer-thought-slider.css'),
+        '@/ControlShortcutBadge.js':resolve(root,'../ui/src/ControlShortcutBadge.tsx'),
+      };
+      if(source==='@zcode/shared/test-ids') return courseTestIdsModule;
+      const normalized=String(source).replaceAll('\\','/');
+      const suffixModules={
+        '/chat-input-toolbar/ComposerModelMenu.js':resolve(root,'../ui/src/chat-input-toolbar/ComposerModelMenu.tsx'),
+        '/chat-input-toolbar/ComposerProviderMenu.js':resolve(root,'../ui/src/chat-input-toolbar/ComposerProviderMenu.tsx'),
+        '/chat-input-toolbar/ComposerEffortHeading.js':resolve(root,'../ui/src/chat-input-toolbar/ComposerEffortHeading.tsx'),
+        '/chat-input-toolbar/ComposerTriggerTransition.js':resolve(root,'../ui/src/chat-input-toolbar/ComposerTriggerTransition.tsx'),
+        '/chat-input-toolbar/composer-thought-slider.css':resolve(root,'../ui/src/chat-input-toolbar/composer-thought-slider.css'),
+        '/ControlShortcutBadge.js':resolve(root,'../ui/src/ControlShortcutBadge.tsx'),
+      };
+      const suffix=Object.keys(suffixModules).find(key=>normalized.endsWith(key));
+      if(suffix) return suffixModules[suffix];
+      return modules[source] || null;
+    },async load(id){
+      if(id===courseTestIdsModule){
+        const originalTestIds=pathToFileURL(resolve(root,'../shared/src/test-ids.ts')).href;
+        return `export * from ${JSON.stringify(originalTestIds)};
+export const TID_CHAT_MODEL_GUIDE = "chat-model-guide";
+export const TID_CHAT_MODEL_GUIDE_DISMISS = "chat-model-guide-dismiss";`;
+      }
+      if(resolve(id)===resolve(root,'../ui/src/ModelConfigSelect.tsx')||
+          resolve(id)===resolve(root,'../ui/src/ModelConfigSelect.course-v4.tsx')){
+        return readFile(new URL('../vendor/zcode-v4-ui/components/ModelConfigSelect.tsx',import.meta.url),'utf8');
+      }
+      if(resolve(id)===resolve(root,'../ui/src/chat-input-toolbar/ComposerModelMenu.tsx'))
+        return readFile(new URL('../vendor/zcode-v4-ui/chat-input-toolbar/ComposerModelMenu.tsx',import.meta.url),'utf8');
+      if(resolve(id)===resolve(root,'../ui/src/chat-input-toolbar/ComposerProviderMenu.tsx'))
+        return readFile(new URL('../vendor/zcode-v4-ui/chat-input-toolbar/ComposerProviderMenu.tsx',import.meta.url),'utf8');
+      if(resolve(id)===resolve(root,'../ui/src/chat-input-toolbar/ComposerEffortHeading.tsx'))
+        return readFile(new URL('../vendor/zcode-v4-ui/chat-input-toolbar/ComposerEffortHeading.tsx',import.meta.url),'utf8');
+      if(resolve(id)===resolve(root,'../ui/src/chat-input-toolbar/ComposerTriggerTransition.tsx'))
+        return readFile(new URL('../vendor/zcode-v4-ui/chat-input-toolbar/ComposerTriggerTransition.tsx',import.meta.url),'utf8');
+      if(resolve(id)===resolve(root,'../ui/src/chat-input-toolbar/composer-thought-slider.css'))
+        return readFile(new URL('../vendor/zcode-v4-ui/chat-input-toolbar/composer-thought-slider.css',import.meta.url),'utf8');
+      if(resolve(id)===resolve(root,'../ui/src/ControlShortcutBadge.tsx'))
+        return readFile(new URL('../vendor/zcode-v4-ui/components/ControlShortcutBadge.tsx',import.meta.url),'utf8');
+      return null;
+    }},
     {name:'kuaixue-upstream-compat',enforce:'pre',async load(id){
       if(!/(?:session-store\.port|zcode-protocol-legacy-types)\.ts$/.test(id)) return null;
       let source=await readFile(id,'utf8');
@@ -164,4 +379,6 @@ await build({root, configFile:resolve(root, 'vite.config.ts'), base:'/kuaixue/wo
 });
 
 await copyFile(resolve(upstream,'LICENSE'),fileURLToPath(new URL(output+'LICENSE',import.meta.url)));
+await copyFile(fileURLToPath(new URL('../public/third-party/IconPark-LICENSE.txt',import.meta.url)),
+  fileURLToPath(new URL(output+'IconPark-LICENSE.txt',import.meta.url)));
 await brandVibeWorkbench(fileURLToPath(new URL(output, import.meta.url)));
