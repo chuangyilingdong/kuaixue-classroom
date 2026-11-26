@@ -2,6 +2,7 @@ import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
 import { createApiServer } from "../apps/api/server.mjs";
 import { loadCourseCatalog } from "../src/services/courseCatalog.js";
+import { defaultCourseCategories } from "../shared/catalog-categories.mjs";
 
 let server;
 let baseUrl;
@@ -36,9 +37,9 @@ test("serves the default catalog entries through the standalone categories endpo
   const response = await fetch(`${baseUrl}/api/v1/catalog/categories`);
   assert.equal(response.status, 200);
   const payload = await response.json();
-  assert.deepEqual(payload.data.entries.map(entry => entry.label), ["画布课程", "VibeCoding"]);
+  assert.deepEqual(payload.data.entries.map(entry => entry.label), defaultCourseCategories);
   const catalog = await loadCourseCatalog({ baseUrl });
-  assert.deepEqual(catalog.categories.map(entry => entry.label), ["画布课程", "VibeCoding"]);
+  assert.deepEqual(catalog.categories.map(entry => entry.label), defaultCourseCategories);
 });
 
 test("serves an immutable course version with objectives and structured steps", async () => {

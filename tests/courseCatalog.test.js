@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { loadCourseCatalog, loadCourseDetail, CourseCatalogError } from "../src/services/courseCatalog.js";
 import { displayModelLabel, normalizeCourseDetail, normalizeMediaUrl } from "../src/data/courses.js";
 import { displayCanvasModelLabel } from "../vendor/academy-canvas/canvasBoxNode.js";
+import { defaultCatalogCategories } from "../shared/catalog-categories.mjs";
 
 test("uses the labeled demo catalog when no service origin is configured", async () => {
   const result = await loadCourseCatalog({ baseUrl: "" });
@@ -309,16 +310,16 @@ test("an empty entry configuration keeps only the client all-courses entry", asy
   assert.deepEqual(result.categories,[]);
 });
 
-test("the client accepts the backend maximum of 30 entries", async () => {
-  const entries = Array.from({length:30},(_,index)=>({
+test("the client accepts the backend maximum of 40 entries", async () => {
+  const entries = Array.from({length:40},(_,index)=>({
     id:`category_${index}`,label:`分类 ${index}`,filterType:"category",filterValue:`类别 ${index}`,
   }));
   const result = await loadCourseCatalog({
     baseUrl:"https://kuaixue.test",
     fetchImpl:async url => Response.json({data:url.endsWith("/categories") ? {entries} : {items:[]}}),
   });
-  assert.equal(result.categories.length,30);
-  assert.equal(result.categories.at(-1).category,"类别 29");
+  assert.equal(result.categories.length,40);
+  assert.equal(result.categories.at(-1).category,"类别 39");
 });
 
 test("category refresh reports malformed or unavailable configuration and propagates cancellation", async () => {
@@ -357,7 +358,7 @@ test("desktop category reads preserve a legacy 404 without relying on its CORS h
   });
   assert.equal(requested.length,1);
   assert.equal(catalog.courses[0].id,"live");
-  assert.deepEqual(catalog.categories.map(item => item.id),["canvas","vibecoding"]);
+  assert.deepEqual(catalog.categories.map(item => item.id),defaultCatalogCategories.map(item => item.id));
 });
 
 test("desktop category reads keep configured order and report service errors and cancellation", async () => {

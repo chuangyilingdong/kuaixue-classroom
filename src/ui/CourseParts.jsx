@@ -16,7 +16,7 @@ export const purchases = (course) =>
     ? "暂无统计"
     : `${course.purchaseCount.toLocaleString("zh-CN")} 次${course.versionId?.startsWith("demo-") ? "（演示）" : ""}`;
 export function matchesQuery(course, query) {
-  return `${course.title} ${course.subtitle} ${course.category}`
+  return `${course.title} ${course.subtitle} ${course.category} ${(course.categories ?? []).join(" ")}`
     .toLowerCase()
     .includes(query.trim().toLowerCase());
 }

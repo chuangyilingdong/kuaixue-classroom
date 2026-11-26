@@ -68,7 +68,11 @@ export default function CatalogWorkspace({
         </div>
         <div className="library-tabs" role="group" aria-label="课程类型">
           {[{id: null, label: "全部课程"}, ...categories].map(item => {
-            const Icon = item.id === null ? Compass : item.mode === "VIBECODING" ? Code2 : Layers3;
+            const Icon = item.id === null
+              ? Compass
+              : item.label === "VibeCoding" || item.mode === "VIBECODING"
+                ? Code2
+                : Layers3;
             return (
               <button
                 key={item.id === null ? "all-courses" : `entry-${item.id}`}
@@ -144,7 +148,7 @@ export default function CatalogWorkspace({
                           </span>
                           <span className="card-footer">
                             <span>
-                              {course.category}
+                              {(course.categories?.length ? course.categories : [course.category]).join(" · ")}
                               <small>
                                 <Clock3 size={12} />
                                 {course.duration}

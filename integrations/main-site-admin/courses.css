@@ -78,6 +78,14 @@
 .kx-category-row .kx-controls {
   padding-bottom: 3px;
 }
+.kx-category-row .kx-controls {
+  display: flex;
+  gap: 5px;
+}
+.kx-category-row .kx-controls button {
+  min-width: 34px;
+  padding: 5px 8px;
+}
 .kx-category-settings .kx-primary {
   margin-left: 10px;
 }
@@ -207,6 +215,24 @@
 }
 .kx-checks input {
   margin: 0 7px 0 0;
+}
+.kx-course-categories {
+  margin: 12px 0;
+}
+.kx-category-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+.kx-category-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+  font-weight: 450;
+}
+.kx-category-options input {
+  margin: 0;
 }
 .kx-body fieldset,
 .kx-group,

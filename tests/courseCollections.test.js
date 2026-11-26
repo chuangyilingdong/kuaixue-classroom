@@ -9,7 +9,7 @@ import { createApiServer } from '../apps/api/server.mjs';
 import { loadCourseCatalog } from '../src/services/courseCatalog.js';
 import { createCourseClient } from '../src/services/courseClient.js';
 import { groupCourseWorks, canvasWorkAssets } from '../src/data/works.js';
-import { defaultCatalogCategories, matchesCatalogCategory } from '../shared/catalog-categories.mjs';
+import { catalogEntriesForCategories, defaultCatalogCategories, defaultCourseCategories, matchesCatalogCategory } from '../shared/catalog-categories.mjs';
 import { readSnapshotPreview } from '../shared/work-preview.mjs';
 import { mountKuaixueCourses } from '../integrations/main-site-admin/mountCourses.mjs';
 import workshop from '../electron/workshop.cjs';
@@ -19,7 +19,7 @@ import localVibe from '../electron/course-local-vibe.cjs';
 import { DatabaseSync } from 'node:sqlite';
 
 const draft = {
-  title: '课程作品', subtitle: '作品展示', price: 0, category: '视觉创作',
+  title: '课程作品', subtitle: '作品展示', price: 0, category: '视觉创作', categories: ['视觉创作', '创作实训'],
   permittedDeliveryModes: ['CANVAS', 'VIBECODING'], steps: [], thumbnailUrl: 'https://cdn.example/cover.png',
 };
 
@@ -41,28 +41,38 @@ test('分类配置持久化、校验重复名称和并发覆盖，并由课程�
   const filename = join(directory, 'courses.sqlite');
   let platform = openCoursePlatform(filename);
   t.after(() => { platform.close(); rmSync(directory, { recursive: true, force: true }); });
-  assert.deepEqual(platform.catalogCategories(), { revision: 0, items: defaultCatalogCategories });
-  const items = [
-    { id: 'vibe', label: 'VibeCoding', mode: 'VIBECODING' },
-    { id: 'visual', label: '视觉创作', category: '视觉创作' },
-  ];
-  assert.deepEqual(platform.saveCatalogCategories('admin', { revision: 0, items }), { revision: 1, items });
-  assert.throws(() => platform.saveCatalogCategories('admin', { revision: 0, items }), { status: 409 });
-  assert.throws(() => platform.saveCatalogCategories('admin', { revision: 1, items: [items[0], { ...items[0], id: 'duplicate' }] }), { status: 400 });
+  assert.deepEqual(platform.catalogCategories(), {
+    revision: 0, items: defaultCatalogCategories, courseCategories: defaultCourseCategories, categories: defaultCourseCategories,
+  });
+  const courseCategories = ['视觉创作', '创作实训'];
+  const items = catalogEntriesForCategories(courseCategories);
+  assert.deepEqual(platform.saveCatalogCategories('admin', { revision: 0, items, courseCategories }), {
+    revision: 1, items, courseCategories, categories: courseCategories,
+  });
+  assert.throws(() => platform.saveCatalogCategories('admin', { revision: 0, items, courseCategories }), { status: 409 });
+  assert.throws(() => platform.saveCatalogCategories('admin', {
+    revision: 1, courseCategories: ['重复', '重复'],
+  }), { status: 400 });
   platform.close();
   platform = openCoursePlatform(filename);
-  assert.deepEqual(platform.catalogCategories(), { revision: 1, items });
-  platform.publish('admin', draft);
+  assert.deepEqual(platform.catalogCategories(), { revision: 1, items, courseCategories, categories: courseCategories });
+  assert.throws(() => platform.publish('admin', { ...draft, categories: ['未配置归属'] }), { status: 400 });
+  const published = platform.publish('admin', draft);
+  assert.deepEqual(published.categories, ['视觉创作', '创作实训']);
+  assert.equal(published.category, '视觉创作');
   const server = createApiServer({ platform });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
   const catalog = await loadCourseCatalog({ baseUrl: `http://127.0.0.1:${server.address().port}` });
   assert.deepEqual(catalog.categories, items);
+  assert.deepEqual(catalog.courses[0].categories, ['视觉创作', '创作实训']);
   const response = await fetch(`http://127.0.0.1:${server.address().port}/api/v1/catalog/categories`);
   const publicConfig = await response.json();
   assert.deepEqual(publicConfig.data.entries.map(entry => entry.label), items.map(item => item.label));
+  assert.deepEqual(publicConfig.data.categories, courseCategories);
   assert.equal(matchesCatalogCategory(catalog.courses[0], items[0]), true);
   assert.equal(matchesCatalogCategory(catalog.courses[0], items[1]), true);
+  assert.equal(matchesCatalogCategory({ ...catalog.courses[0], categories: ['视觉创作'] }, items[1]), false);
   assert.equal(matchesCatalogCategory(catalog.courses[0], { category: '其他' }), false);
 });
 
@@ -82,6 +92,50 @@ test('分类管理复用后台读取、发布权限和 CSRF 中间件', () => {
   assert.equal(get[2], 'kuaixue.read');
   assert.equal(post[2], 'kuaixue.publish');
   assert.equal(post[3], csrf);
+});
+
+test('legacy category editor payload migrates existing category entries into the shared list', () => {
+  const platform = openCoursePlatform(':memory:');
+  try {
+    const result = platform.saveCatalogCategories('admin', {
+      revision: 0,
+      items: [
+        { id: 'canvas', label: '画布课程', mode: 'CANVAS' },
+        { id: 'visual', label: '视觉创作', category: '视觉创作' },
+      ],
+    });
+    assert.deepEqual(result.courseCategories, ['画布课程', '视觉创作']);
+  } finally {
+    platform.close();
+  }
+});
+
+test('legacy single-category courses inherit their former workspace tabs during catalog migration', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'kx-legacy-course-category-'));
+  const filename = join(directory, 'courses.sqlite');
+  const platform = openCoursePlatform(filename);
+  try {
+    const course = platform.publish('admin', {
+      title: '旧版课程',
+      subtitle: '旧版课程分类兼容',
+      price: 0,
+      category: '创作实训',
+      permittedDeliveryModes: ['CANVAS', 'VIBECODING'],
+      steps: [],
+    });
+    const db = new DatabaseSync(filename);
+    const row = db.prepare('SELECT body FROM kx_versions WHERE version=?').get(course.versionId);
+    const body = JSON.parse(row.body);
+    delete body.categories;
+    db.prepare('UPDATE kx_versions SET body=? WHERE version=?').run(JSON.stringify(body), course.versionId);
+    db.close();
+
+    assert.deepEqual(platform.catalog()[0].categories.sort(), ['画布课程', 'VibeCoding', '创作实训'].sort());
+    assert.equal(platform.catalog()[0].category, '创作实训');
+  } finally {
+    platform.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('作品展示只读取已保存内容，校验身份、课程权益和保存的工作区类型', async t => {

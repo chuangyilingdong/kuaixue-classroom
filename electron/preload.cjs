@@ -31,6 +31,6 @@ contextBridge.exposeInMainWorld("kuaixueDesktop", Object.freeze({
   login: () => ipcRenderer.invoke("account:login"),
   cancelLogin: () => ipcRenderer.invoke('account:cancel-login'),
   setTheme: (theme) => { if (theme === "dark" || theme === "light") ipcRenderer.send("window:theme", theme); },
-  version: "0.1.0",
+  version: "0.1.1",
 }));
 

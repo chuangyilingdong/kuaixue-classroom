@@ -1,10 +1,38 @@
-export const defaultCatalogCategories = [
-  { id: 'canvas', label: '画布课程', mode: 'CANVAS' },
-  { id: 'vibecoding', label: 'VibeCoding', mode: 'VIBECODING' },
+export const defaultCourseCategories = [
+  '画布课程', 'VibeCoding', '创作实训', '影像创作', '视觉设计', '商业视觉', '创意编程', '其他',
 ];
 
+function categoryId(label) {
+  let hash = 2166136261;
+  for (let index = 0; index < label.length; index += 1) {
+    hash = Math.imul(hash ^ label.charCodeAt(index), 16777619);
+  }
+  return `category-${(hash >>> 0).toString(36)}`;
+}
+
+export const defaultCatalogCategories = defaultCourseCategories.map(label => ({
+  id: categoryId(label),
+  label,
+  category: label,
+}));
+
+export function catalogEntriesForCategories(categories) {
+  return categories.map(label => ({ id: categoryId(label), label, category: label }));
+}
+
+export function validateCourseCategories(items) {
+  if (!Array.isArray(items) || !items.length || items.length > 40) throw new Error('课程分类需要保留至少一项，最多 40 项');
+  const seen = new Set();
+  return items.map(value => {
+    const category = typeof value === 'string' ? value.trim() : '';
+    if (!category || category.length > 80 || seen.has(category)) throw new Error('课程分类必须有效且不能重复');
+    seen.add(category);
+    return category;
+  });
+}
+
 export function validateCatalogCategories(items) {
-  if (!Array.isArray(items) || items.length > 20) throw new Error('课程分类最多 20 项');
+  if (!Array.isArray(items) || items.length > 40) throw new Error('课程分类最多 40 项');
   const ids = new Set();
   const labels = new Set();
   return items.map(item => {
@@ -27,11 +55,13 @@ export function matchesCatalogCategory(course, category) {
   if (!category) return true;
   return category.mode
     ? course.permittedDeliveryModes?.includes(category.mode)
-    : course.category === category.category;
+    : Array.isArray(course.categories)
+      ? course.categories.includes(category.category)
+      : course.category === category.category;
 }
 
 export function normalizeCatalogEntries(entries) {
-  if (!Array.isArray(entries) || entries.length > 30) throw new Error('课程分类入口数据格式异常。');
+  if (!Array.isArray(entries) || entries.length > 40) throw new Error('课程分类入口数据格式异常。');
   const ids = new Set();
   return entries.map(item => {
     const id = typeof item?.id === 'string' ? item.id.trim() : '';

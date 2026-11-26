@@ -4,7 +4,12 @@ import {createHash,randomUUID} from 'node:crypto';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import versioning from '../../electron/course-version.cjs';
-import { defaultCatalogCategories, validateCatalogCategories } from '../../shared/catalog-categories.mjs';
+import {
+  defaultCatalogCategories,
+  defaultCourseCategories,
+  catalogEntriesForCategories,
+  validateCourseCategories,
+} from '../../shared/catalog-categories.mjs';
 import { readSnapshotPreview } from '../../shared/work-preview.mjs';
 
 export class CourseProblem extends Error {
@@ -47,22 +52,66 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
     try {const value = fn(); db.exec('COMMIT'); return value;}
     catch (error) {db.exec('ROLLBACK'); throw error;}
   }
+  function normalizeCourseCategories(course) {
+    const modes = Array.isArray(course.permittedDeliveryModes) && course.permittedDeliveryModes.length
+      ? course.permittedDeliveryModes
+      : [course.type];
+    const categories = Array.isArray(course.categories)
+      ? [...new Set(course.categories.filter(item => typeof item === 'string' && item.trim()).map(item => item.trim()))]
+      : [
+        ...modes.map(mode => mode === 'CANVAS' ? '画布课程' : mode === 'VIBECODING' ? 'VibeCoding' : ''),
+        typeof course.category === 'string' ? course.category.trim() : '',
+      ].filter(Boolean);
+    return { ...course, categories, category: course.category || categories[0] || '' };
+  }
   function catalog(includeHidden = false) {
     return db.prepare(`SELECT body,visible FROM kx_listings JOIN kx_versions USING(version) ${includeHidden ? '' : 'WHERE visible=1'} ORDER BY kx_listings.rowid`).all()
-      .map(row => ({...JSON.parse(row.body), visible:Boolean(row.visible)}));
+      .map(row => ({...normalizeCourseCategories(JSON.parse(row.body)), visible:Boolean(row.visible)}));
   }
   function catalogCategories() {
     const row = db.prepare('SELECT revision,body FROM kx_catalog_settings WHERE id=1').get();
-    return row ? { revision: row.revision, items: JSON.parse(row.body) }
-      : { revision: 0, items: defaultCatalogCategories.map(item => ({ ...item })) };
+    if (!row) return {
+      revision: 0,
+      items: defaultCatalogCategories.map(item => ({ ...item })),
+      courseCategories: [...defaultCourseCategories],
+      categories: [...defaultCourseCategories],
+    };
+    const stored = JSON.parse(row.body);
+    const body = Array.isArray(stored) ? { items: stored } : stored;
+    const legacyItems = Array.isArray(body.items) ? body.items : [];
+    const categoryNames = [
+      ...legacyItems.map(item => item?.mode ? item.label : item?.category || item?.label),
+      ...(Array.isArray(body.courseCategories) ? body.courseCategories : defaultCourseCategories),
+    ].filter(value => typeof value === 'string' && value.trim());
+    const courseCategories = [...new Set(categoryNames.map(value => value.trim()))];
+    const canonical = { courseCategories };
+    if (JSON.stringify(stored) !== JSON.stringify(canonical)) {
+      db.prepare('UPDATE kx_catalog_settings SET body=? WHERE id=1').run(JSON.stringify(canonical));
+    }
+    return {
+      revision: row.revision,
+      items: catalogEntriesForCategories(courseCategories),
+      courseCategories,
+      categories: [...courseCategories],
+    };
   }
-  function saveCatalogCategories(actor, { revision, items }) {
-    let categories;
-    try { categories = validateCatalogCategories(items); }
-    catch (error) { reject(400, error.message); }
+  function saveCatalogCategories(actor, { revision, categories, courseCategories, items } = {}) {
+    const current = catalogCategories();
+    let managedCourseCategories;
+    try {
+      const values = Array.isArray(categories)
+        ? categories
+        : Array.isArray(courseCategories)
+          ? courseCategories
+          : Array.isArray(items)
+            ? items.map(item => item?.mode ? item.label : item?.category || item?.label)
+            : current.courseCategories;
+      managedCourseCategories = validateCourseCategories(values);
+    } catch (error) { reject(400, error.message); }
     return transaction(() => {
       if (catalogCategories().revision !== revision) reject(409, '课程分类已更新，请刷新后重试');
-      db.prepare('INSERT OR REPLACE INTO kx_catalog_settings VALUES(1,?,?)').run(revision + 1, JSON.stringify(categories));
+      db.prepare('INSERT OR REPLACE INTO kx_catalog_settings VALUES(1,?,?)')
+        .run(revision + 1, JSON.stringify({ courseCategories: managedCourseCategories }));
       db.prepare('INSERT INTO kx_audit(actor,action,version) VALUES(?,?,?)').run(actor, 'categories', String(revision + 1));
       return catalogCategories();
     });
@@ -70,7 +119,7 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
   function lookup(courseId,versionId) {
     const row = db.prepare('SELECT body FROM kx_versions WHERE course=? AND version=?').get(courseId, versionId);
     if (!row) reject(404,'找不到课程版本');
-    return JSON.parse(row.body);
+    return normalizeCourseCategories(JSON.parse(row.body));
   }
   function publish(actor, draft) {
     return transaction(() => {
@@ -79,8 +128,31 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
         if (!draft.id || !draft.baseVersion || db.prepare('SELECT version FROM kx_listings WHERE course=?').get(draft.id)?.version !== draft.baseVersion) reject(409,'课程已更新，请刷新后再发布');
         base = lookup(draft.id,draft.baseVersion);
       }
+      const categoriesConfigured = Boolean(db.prepare('SELECT id FROM kx_catalog_settings WHERE id=1').get());
+      const managedCategories = catalogCategories().courseCategories;
+      let categories;
+      try {
+        const requested = Array.isArray(draft.categories)
+          ? draft.categories
+          : Array.isArray(base?.categories)
+            ? base.categories
+            : draft.category || base?.category
+              ? [draft.category || base.category]
+              : [];
+        categories = requested.length ? validateCourseCategories(requested) : [];
+      } catch (error) {
+        reject(400, error.message);
+      }
+      if (!categoriesConfigured && !categories.length)
+        categories = [String(draft.category || base?.category || '创作实训')];
+      if (categoriesConfigured && !categories.length)
+        reject(400, '请至少选择一个客户端分类');
+      if (categoriesConfigured && categories.some(category => !managedCategories.includes(category)))
+        reject(400, '课程分类已停用，请从后台课程分类列表中重新选择');
       let course;
       try { course = versioning.buildCourseVersion(draft,base); } catch (error) { reject(400,error.message); }
+      course.categories = categories;
+      course.category = categories[0];
       db.prepare('INSERT INTO kx_versions VALUES(?,?,?)').run(course.versionId,course.id,JSON.stringify(course));
       db.prepare('INSERT OR REPLACE INTO kx_listings VALUES(?,?,1)').run(course.id,course.versionId);
       db.prepare('INSERT INTO kx_audit(actor,action,version) VALUES(?,?,?)').run(actor,'publish',course.versionId);

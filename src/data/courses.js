@@ -1,4 +1,5 @@
 import catalogSeed from "../../data/course-catalog.demo.json" with { type: "json" };
+import { defaultCourseCategories } from "../../shared/catalog-categories.mjs";
 
 const TONES = new Set(["coral", "lime", "blue", "violet", "yellow", "mint"]);
 const ICONS = new Set(["film", "shapes", "code", "box", "sparkles", "book"]);
@@ -74,6 +75,9 @@ export function normalizeCourseItem(item) {
   if (!item.id || !item.title || !["CANVAS", "VIBECODING"].includes(type) || !Number.isInteger(price) || price < 0) {
     throw new Error("Course catalog item is missing required fields.");
   }
+  const categories = Array.isArray(item.categories)
+    ? [...new Set(item.categories.map(String).map(value => value.trim()).filter(Boolean))]
+    : null;
 
   return {
     id: String(item.id),
@@ -82,7 +86,8 @@ export function normalizeCourseItem(item) {
     subtitle: String(item.subtitle || ""),
     type: type === "CANVAS" ? "canvas" : "vibe",
     permittedDeliveryModes: [...modes],
-    category: String(item.category || "其他"),
+    category: categories?.[0] || String(item.category || "其他"),
+    ...(categories ? { categories } : {}),
     level: String(item.level || "未分级"),
     duration: Number.isFinite(duration) && duration > 0 ? `约 ${duration} 分钟` : "时长待定",
     durationMinutes: Number.isFinite(duration) && duration > 0 ? duration : null,
@@ -158,4 +163,4 @@ export function normalizeCourseDetail(item) {
 
 export const courses = catalogSeed.map(normalizeCourseItem);
 export const demoCourseDetails = new Map(catalogSeed.map((course) => [course.id, normalizeCourseDetail(course)]));
-export const categoryFilters = ["全部课程", "画布课程", "VibeCoding"];
+export const categoryFilters = ["全部课程", ...defaultCourseCategories];

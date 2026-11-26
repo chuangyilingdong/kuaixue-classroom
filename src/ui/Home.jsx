@@ -59,7 +59,7 @@ export default function Home({
               <div className="hero-copy" key={course.id}>
                 <div className="eyebrow">
                   <span>{typeName(course)}</span>
-                  {course.category}
+                  {(course.categories?.length ? course.categories : [course.category]).join(" · ")}
                 </div>
                 <h1>{course.title}</h1>
                 <div className="hero-facts">

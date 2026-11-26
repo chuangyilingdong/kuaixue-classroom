@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { CanvasRecipe, VibeRecipe } from './WorkspaceRecipe.jsx';
 import './courses.css';
-import { defaultCatalogCategories } from '../../shared/catalog-categories.mjs';
+import { defaultCatalogCategories, defaultCourseCategories } from '../../shared/catalog-categories.mjs';
 
 const names = { CANVAS: '学院画布', VIBECODING: '灵动 VibeCoding' };
-const empty = () => ({ title: '', subtitle: '', category: '创作实训', price: 0, permittedDeliveryModes: ['CANVAS'], steps: [] });
+const empty = () => ({ title: '', subtitle: '', category: '', categories: [], price: 0, permittedDeliveryModes: ['CANVAS'], steps: [] });
 const draftFor = (course) => ({
   ...course,
   baseVersion: course.versionId,
   price: course.unlockPricePoints,
+  categories: Array.isArray(course.categories) ? course.categories : course.category ? [course.category] : [],
   permittedDeliveryModes: course.permittedDeliveryModes ?? [course.type],
   steps: course.steps ?? [],
 });
@@ -23,6 +24,7 @@ function Review({ draft }) {
       <p>
         解锁价 <strong>{draft.price} 积分</strong>
       </p>
+      <p>客户端分类：{(draft.categories ?? [draft.category]).filter(Boolean).join('、') || '未选择'}</p>
       {draft.permittedDeliveryModes.includes('CANVAS') && (
         <section className="kx-group">
           <h3>学院画布 · {groups.length} 个素材组</h3>
@@ -62,6 +64,11 @@ function Review({ draft }) {
   );
 }
 function CourseInfo({ draft, field, categories }) {
+  const selectedCategories = Array.isArray(draft.categories)
+    ? draft.categories
+    : draft.category
+      ? [draft.category]
+      : [];
   function updateStep(index, patch) {
     field(
       'steps',
@@ -89,14 +96,34 @@ function CourseInfo({ draft, field, categories }) {
           onChange={(e) => field('subtitle', e.target.value)}
         />
       </label>
-      <label>
-        课程归属
-        <input maxLength={80} list="kx-course-categories" value={draft.category || ''}
-          onChange={event => field('category', event.target.value)} />
-        <datalist id="kx-course-categories">
-          {categories.filter(item => item.category).map(item => <option key={item.id} value={item.category} />)}
-        </datalist>
-      </label>
+      <fieldset className="kx-course-categories">
+        <legend>客户端分类（可多选）</legend>
+        <div className="kx-category-options">
+          {selectedCategories.filter(category => !categories.includes(category)).map(category => (
+            <label key={`inactive-${category}`}>
+              <input
+                type="checkbox"
+                checked
+                onChange={event => field('categories', selectedCategories.filter(item => item !== category))}
+              />
+              {category}（已停用）
+            </label>
+          ))}
+          {categories.map(category => (
+            <label key={category}>
+              <input
+                type="checkbox"
+                checked={selectedCategories.includes(category)}
+                onChange={event => field('categories', event.target.checked
+                  ? [...new Set([...selectedCategories, category])]
+                  : selectedCategories.filter(item => item !== category))}
+              />
+              {category}
+            </label>
+          ))}
+        </div>
+        {!categories.length && <small>请先在课程分类设置中添加分类</small>}
+      </fieldset>
       <label>
         课程解锁价（积分）
         <input
@@ -192,7 +219,11 @@ export default function KuaixueCourses({ api }) {
     [busy, setBusy] = useState(false);
   const form = useRef(null),
     pending = useRef(false);
-  const [categoryConfig, setCategoryConfig] = useState({ revision: 0, items: defaultCatalogCategories });
+  const [categoryConfig, setCategoryConfig] = useState({
+    revision: 0,
+    items: defaultCatalogCategories,
+    courseCategories: defaultCourseCategories,
+  });
   const [categoryError, setCategoryError] = useState('');
   const [categoriesLoaded, setCategoriesLoaded] = useState(false);
   useEffect(() => {
@@ -222,8 +253,28 @@ export default function KuaixueCourses({ api }) {
     setPage('info');
     setMessage('');
   }
-  function editCategory(index, patch) {
-    setCategoryConfig(config => ({ ...config, items: config.items.map((item, position) => position === index ? { ...item, ...patch } : item) }));
+  function editCourseCategory(index, value) {
+    setCategoryConfig(config => ({
+      ...config,
+      courseCategories: config.courseCategories.map((item, position) => position === index ? value : item),
+    }));
+    setCategoryError('');
+  }
+  function moveCourseCategory(index, direction) {
+    const target = index + direction;
+    if (target < 0 || target >= categoryConfig.courseCategories.length) return;
+    setCategoryConfig(config => {
+      const courseCategories = [...config.courseCategories];
+      [courseCategories[index], courseCategories[target]] = [courseCategories[target], courseCategories[index]];
+      return { ...config, courseCategories };
+    });
+    setCategoryError('');
+  }
+  function removeCourseCategory(index) {
+    setCategoryConfig(config => ({
+      ...config,
+      courseCategories: config.courseCategories.filter((_, position) => position !== index),
+    }));
     setCategoryError('');
   }
   async function saveCategories(event) {
@@ -233,7 +284,10 @@ export default function KuaixueCourses({ api }) {
     setBusy(true);
     setCategoryError('');
     try {
-      setCategoryConfig(await api.saveCategories(categoryConfig));
+      setCategoryConfig(await api.saveCategories({
+        revision: categoryConfig.revision,
+        courseCategories: categoryConfig.courseCategories,
+      }));
       setCategoryError('分类已保存');
     } catch (error) { setCategoryError(error.message); }
     finally { pending.current = false; setBusy(false); }
@@ -249,6 +303,21 @@ export default function KuaixueCourses({ api }) {
       if (!draft.permittedDeliveryModes.length) {
         setPage('info');
         setMessage('请至少选择一个工作区');
+        return;
+      }
+      const selectedCategories = Array.isArray(draft.categories)
+        ? draft.categories
+        : draft.category
+          ? [draft.category]
+          : [];
+      if (!selectedCategories.length) {
+        setPage('info');
+        setMessage('请至少选择一个客户端分类');
+        return;
+      }
+      if (selectedCategories.some(category => !categoryConfig.courseCategories.includes(category))) {
+        setPage('info');
+        setMessage('请移除已停用分类，并至少选择一个有效分类');
         return;
       }
       const invalid = form.current.querySelector('input:invalid,select:invalid,textarea:invalid');
@@ -288,34 +357,27 @@ export default function KuaixueCourses({ api }) {
         <h1>课程管理</h1>
       </header>
       <details className="kx-category-settings">
-        <summary>课程库分类</summary>
+        <summary>客户端分类设置</summary>
         <form onSubmit={saveCategories}>
           <fieldset disabled={busy || !categoriesLoaded}>
-            {categoryConfig.items.map((item, index) => <div className="kx-category-row" key={item.id}>
-              <label>分类名称<input required maxLength={40} value={item.label}
-                onChange={event => editCategory(index, { label: event.target.value })} /></label>
-              <label>课程范围<select value={item.mode || 'CATEGORY'} onChange={event => editCategory(index, {
-                mode: event.target.value === 'CATEGORY' ? undefined : event.target.value,
-                category: item.category || item.label,
-              })}>
-                <option value="CANVAS">画布课程</option><option value="VIBECODING">VibeCoding</option><option value="CATEGORY">指定课程归属</option>
-              </select></label>
-              {!item.mode && <label>课程归属<input required maxLength={80} value={item.category || ''}
-                onChange={event => editCategory(index, { category: event.target.value })} /></label>}
+            <p>课程编辑中可多选；客户端分类入口将按此顺序显示。工作区权限仍在课程里单独设置。</p>
+            {categoryConfig.courseCategories.map((category, index) => <div className="kx-category-row" key={`${category}-${index}`}>
+              <label>分类名称<input required maxLength={80} value={category}
+                onChange={event => editCourseCategory(index, event.target.value)} /></label>
               <div className="kx-controls">
-                <button type="button" aria-label={`上移${item.label}`} title="上移" disabled={!index} onClick={() => {
-                  const items = [...categoryConfig.items];
-                  [items[index - 1], items[index]] = [items[index], items[index - 1]];
-                  setCategoryConfig({ ...categoryConfig, items });
-                }}>↑</button>
-                <button type="button" aria-label={`移除${item.label}`} title="移除分类" onClick={() =>
-                  setCategoryConfig({ ...categoryConfig, items: categoryConfig.items.filter(value => value.id !== item.id) })
-                }>×</button>
+                <button type="button" aria-label={`上移${category}`} title="上移" disabled={!index}
+                  onClick={() => moveCourseCategory(index, -1)}>↑</button>
+                <button type="button" aria-label={`下移${category}`} title="下移" disabled={index === categoryConfig.courseCategories.length - 1}
+                  onClick={() => moveCourseCategory(index, 1)}>↓</button>
+                <button type="button" aria-label={`移除分类${category}`} title="移除分类" disabled={categoryConfig.courseCategories.length <= 1}
+                  onClick={() => removeCourseCategory(index)}>×</button>
               </div>
             </div>)}
-            <button type="button" disabled={categoryConfig.items.length >= 20} onClick={() =>
-              setCategoryConfig({ ...categoryConfig, items: [...categoryConfig.items, { id: crypto.randomUUID(), label: '', category: '' }] })
-            }>添加分类</button>
+            <button type="button" disabled={categoryConfig.courseCategories.length >= 40}
+              onClick={() => setCategoryConfig(config => ({
+                ...config,
+                courseCategories: [...config.courseCategories, ''],
+              }))}>添加分类</button>
             <button type="submit" className="kx-primary">保存分类</button>
           </fieldset>
           {categoryError && <p role="status">{categoryError}</p>}
@@ -371,7 +433,7 @@ export default function KuaixueCourses({ api }) {
           </nav>
           <fieldset className="kx-body" disabled={busy}>
             <div data-page="info" hidden={page !== 'info'}>
-            <CourseInfo draft={draft} field={field} categories={categoryConfig.items} />
+            <CourseInfo draft={draft} field={field} categories={categoryConfig.courseCategories} />
             </div>
             {draft.permittedDeliveryModes.includes('CANVAS') && (
               <div data-page="CANVAS" hidden={page !== 'CANVAS'}>

@@ -5,7 +5,7 @@ import {mainSiteRuntimeFromEnv} from './main-site-runtime.mjs';
 import {canvasGenerationFromEnv} from './canvas-generation.mjs';
 import {snapshotLimits} from '../../shared/local-snapshot.mjs';
 import {verifyCourseAssetAccess} from '../../shared/course-asset-url.mjs';
-import {defaultCatalogCategories} from '../../shared/catalog-categories.mjs';
+import {defaultCatalogCategories, defaultCourseCategories} from '../../shared/catalog-categories.mjs';
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -77,13 +77,13 @@ function nextCursor(offset) {
 
 function courseDetails(course) {
   const {
-    id, versionId, title, subtitle, type, category, level, durationMinutes,
+    id, versionId, title, subtitle, type, category, categories, level, durationMinutes,
     unlockPricePoints, modelLabels, previewSteps, thumbnailUrl = null, bannerUrl, coverFocus, purchaseCount = null, visualTone,
     icon, learningObjectives, steps, assets, permittedDeliveryModes, introHtml, galleryImages, introImages, mediaCredit,
     classroomConfig, vibeModelIds, vibeModelLabels,
   } = course;
   return {
-    id, versionId, title, subtitle, type, category, level, durationMinutes,
+    id, versionId, title, subtitle, type, category, categories, level, durationMinutes,
     unlockPricePoints, modelLabels, previewSteps, thumbnailUrl, bannerUrl, coverFocus, purchaseCount, visualTone, icon,
     learningObjectives, steps, assets, permittedDeliveryModes, introHtml, galleryImages, introImages, mediaCredit,
     classroomConfig, vibeModelIds, vibeModelLabels,
@@ -106,13 +106,14 @@ function catalogPage(catalog, params) {
   let items = catalog.filter((course) => {
     if (type && !(course.permittedDeliveryModes ?? [course.type]).includes(type)) return false;
     if (!query) return true;
-    return `${course.title} ${course.subtitle} ${course.category}`.toLocaleLowerCase("zh-CN").includes(query);
+    return `${course.title} ${course.subtitle} ${course.category} ${(course.categories ?? []).join(' ')}`
+      .toLocaleLowerCase("zh-CN").includes(query);
   });
   if (sort === "price_asc") items = items.toSorted((a, b) => a.unlockPricePoints - b.unlockPricePoints);
   if (sort === "duration_asc") items = items.toSorted((a, b) => a.durationMinutes - b.durationMinutes);
 
-  const pageItems = items.slice(offset, offset + limitRaw).map(({ id, versionId, title, subtitle, type: courseType, permittedDeliveryModes, category, level, durationMinutes, unlockPricePoints, modelLabels, previewSteps, thumbnailUrl = null, bannerUrl, coverFocus, purchaseCount = null, visualTone, icon }) => ({
-    id, versionId, title, subtitle, type: courseType, permittedDeliveryModes, category, level, durationMinutes,
+  const pageItems = items.slice(offset, offset + limitRaw).map(({ id, versionId, title, subtitle, type: courseType, permittedDeliveryModes, category, categories, level, durationMinutes, unlockPricePoints, modelLabels, previewSteps, thumbnailUrl = null, bannerUrl, coverFocus, purchaseCount = null, visualTone, icon }) => ({
+    id, versionId, title, subtitle, type: courseType, permittedDeliveryModes, category, categories, level, durationMinutes,
     unlockPricePoints, modelLabels, previewSteps, thumbnailUrl, bannerUrl, coverFocus, purchaseCount, visualTone, icon,
   }));
   const nextOffset = offset + pageItems.length;
@@ -351,20 +352,21 @@ export function createApiServer({ catalog = DEFAULT_CATALOG, accountReader, plat
       const config = platform?.catalogCategories?.();
       const entries = config
         ? config.items.map(item => ({
-        id: item.id,
-        label: item.label,
-        filterType: item.mode ? "mode" : "category",
-        filterValue: item.mode || item.category,
-        enabled: true,
-      }))
+          id: item.id,
+          label: item.label,
+          filterType: item.mode ? "mode" : "category",
+          filterValue: item.mode || item.category,
+          enabled: true,
+        }))
         : defaultCatalogCategories.map(item => ({
           id: item.id,
           label: item.label,
-          filterType: "mode",
-          filterValue: item.mode,
+          filterType: "category",
+          filterValue: item.category,
           enabled: true,
         }));
-      const categories = [...new Set((platform ? platform.catalog() : catalog).map(course => course.category).filter(Boolean))];
+      const categories = config?.courseCategories ??
+        [...defaultCourseCategories];
       res.setHeader("Cache-Control", "public, max-age=30");
       return json(res, 200, { data: { categories, entries } });
     }

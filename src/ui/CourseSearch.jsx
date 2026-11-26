@@ -79,7 +79,7 @@ export default function CourseSearch({ catalog, value, onChange, inputRef, isOpe
             onClick={() => { setIsOpen(false); onOpen(course, inputRef.current); }}
           >
             <CourseMark course={course} />
-            <span className="search-result-copy"><strong>{course.title}</strong><small>{course.category} · {course.duration}</small></span>
+            <span className="search-result-copy"><strong>{course.title}</strong><small>{(course.categories?.length ? course.categories : [course.category]).join(' · ')} · {course.duration}</small></span>
             <span className="search-result-price">{course.price}<small> 积分</small></span>
             <ArrowRight size={14} className="search-result-arrow" aria-hidden="true" />
           </button>)}</div>

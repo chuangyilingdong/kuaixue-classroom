@@ -154,7 +154,7 @@ export default function CourseDetail({ course, close, saved, toggle, entitlement
   const unavailableValues = new Set(["其他", "未分级", "时长待定", "暂无统计", "详见课程介绍"]);
   const hasValue = (value) => value != null && String(value).trim() !== "" && !unavailableValues.has(String(value).trim());
   const rows = [
-    ["课程分类", item.category],
+    ["课程分类", (item.categories?.length ? item.categories : [item.category]).join("、")],
     ["课程类型", typeName(item)],
     ["课程难度", item.level],
     ["购买次数", purchases(item)],

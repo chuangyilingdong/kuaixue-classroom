@@ -14,6 +14,23 @@ export function mountKuaixueCourses(
   },
 ) {
   const base = '/api/admin/kuaixue/courses';
+  function categoryView(config) {
+    const categories = config.categories ?? config.courseCategories ?? [];
+    const entries = config.items.map(item => ({
+      id: item.id,
+      label: item.label,
+      filterType: item.mode ? 'mode' : 'category',
+      filterValue: item.mode || item.category,
+      enabled: true,
+    }));
+    return {
+      revision: config.revision,
+      categories,
+      courseCategories: categories,
+      items: config.items,
+      entries,
+    };
+  }
   function action(work) {
     return async (req, res, next) => {
       try {
@@ -36,13 +53,13 @@ export function mountKuaixueCourses(
   router.get(
     base + '/categories',
     requirePermission('kuaixue.read'),
-    action(() => platform.catalogCategories()),
+    action(() => categoryView(platform.catalogCategories())),
   );
   router.post(
     base + '/categories',
     requirePermission('kuaixue.publish'),
     requireCsrf,
-    action((actor, config) => platform.saveCatalogCategories(actor, config)),
+    action((actor, config) => categoryView(platform.saveCatalogCategories(actor, config))),
   );
   router.get(
     base + '/models',
