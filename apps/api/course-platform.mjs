@@ -84,13 +84,16 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
       ...(Array.isArray(body.courseCategories) ? body.courseCategories : defaultCourseCategories),
     ].filter(value => typeof value === 'string' && value.trim());
     const courseCategories = [...new Set(categoryNames.map(value => value.trim()))];
-    const canonical = { courseCategories };
+    const canonical = {
+      items: catalogEntriesForCategories(courseCategories),
+      courseCategories,
+    };
     if (JSON.stringify(stored) !== JSON.stringify(canonical)) {
       db.prepare('UPDATE kx_catalog_settings SET body=? WHERE id=1').run(JSON.stringify(canonical));
     }
     return {
       revision: row.revision,
-      items: catalogEntriesForCategories(courseCategories),
+      items: canonical.items,
       courseCategories,
       categories: [...courseCategories],
     };
@@ -111,7 +114,10 @@ export function openCoursePlatform(filename, {debitOrLookup, issueRuntimeTicket,
     return transaction(() => {
       if (catalogCategories().revision !== revision) reject(409, '课程分类已更新，请刷新后重试');
       db.prepare('INSERT OR REPLACE INTO kx_catalog_settings VALUES(1,?,?)')
-        .run(revision + 1, JSON.stringify({ courseCategories: managedCourseCategories }));
+        .run(revision + 1, JSON.stringify({
+          items: catalogEntriesForCategories(managedCourseCategories),
+          courseCategories: managedCourseCategories,
+        }));
       db.prepare('INSERT INTO kx_audit(actor,action,version) VALUES(?,?,?)').run(actor, 'categories', String(revision + 1));
       return catalogCategories();
     });
