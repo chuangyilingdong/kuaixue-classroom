@@ -1,12 +1,14 @@
 import {spawnSync,execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {copyFile,mkdir,readFile,stat,writeFile} from 'node:fs/promises';
+import {copyFile,cp,mkdir,readFile,stat,writeFile} from 'node:fs/promises';
 import {dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {courseServiceFiles} from './course-service-files.mjs';
+import {courseServiceRuntimeDependencies,courseServiceRuntimePackages} from './course-service-runtime.mjs';
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const files=courseServiceFiles;
+const runtimePackages=courseServiceRuntimePackages(root);
 
 function argument(name){
   const index=process.argv.indexOf(name);
@@ -34,8 +36,17 @@ for(const relative of files){
   await copyFile(source,destination);
 }
 
+for(const dependency of courseServiceRuntimeDependencies){
+  await cp(runtimePackages[dependency],join(output,'node_modules',dependency),{
+    recursive:true,
+    dereference:true,
+  });
+}
+
+execFileSync(process.execPath,['-e','require("yauzl")'],{cwd:output,stdio:'inherit'});
+
 const archive=join(output,'kuaixue-service-release.tar.gz');
-const result=spawnSync('tar',['-czf',archive,'-C',output,...files],{stdio:'inherit'});
+const result=spawnSync('tar',['-czf',archive,'-C',output,...files,'node_modules'],{stdio:'inherit'});
 if(result.status!==0)throw new Error(`tar failed with status ${result.status}`);
 const bytes=(await stat(archive)).size;
 const sha256=await hash(archive);
@@ -50,6 +61,7 @@ const manifest={
   artifact:'kuaixue-service-release.tar.gz',
   bytes,
   sha256,
+  runtimeDependencies:courseServiceRuntimeDependencies,
   files:Object.fromEntries(await Promise.all(files.map(async file=>[file,await hash(join(output,file))]))),
 };
 await writeFile(join(output,'release-manifest.json'),JSON.stringify(manifest,null,2)+'\n');

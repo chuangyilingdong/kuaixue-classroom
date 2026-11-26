@@ -3,6 +3,7 @@ import {access} from 'node:fs/promises';
 import {join} from 'node:path';
 import test from 'node:test';
 import {courseServiceFiles} from '../scripts/course-service-files.mjs';
+import {courseServiceRuntimeDependencies,courseServiceRuntimePackages} from '../scripts/course-service-runtime.mjs';
 
 test('course service package includes every admin runtime integration', async () => {
   const required = [
@@ -16,4 +17,14 @@ test('course service package includes every admin runtime integration', async ()
   ];
   for (const file of required) assert.ok(courseServiceFiles.includes(file), `${file} must be packaged`);
   for (const file of required) await access(join(process.cwd(), file));
+});
+
+test('course service package includes zip preview runtime dependencies', async () => {
+  const required = ['buffer-crc32', 'pend', 'yauzl'];
+  const packages = courseServiceRuntimePackages(process.cwd());
+  for (const dependency of required) {
+    assert.ok(courseServiceRuntimeDependencies.includes(dependency), `${dependency} must be packaged`);
+    await access(join(packages[dependency], 'package.json'));
+  }
+  assert.ok(courseServiceFiles.includes('shared/work-preview.mjs'), 'work-preview must be packaged');
 });
